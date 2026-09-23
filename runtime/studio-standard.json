@@ -1,0 +1,67 @@
+{
+  "version": "1.0",
+  "principles": [
+    "Inspect the real project and existing conventions before changing anything.",
+    "Preserve explicit requirements and infer only reversible defaults.",
+    "Build the smallest complete end-to-end result, not a plan-only substitute.",
+    "Treat player-facing clarity, accessibility, security, performance and recovery as product requirements.",
+    "Validate in the target engine, read back final state and report concrete evidence.",
+    "Keep changes reversible; document migrations, destructive operations and rollback triggers."
+  ],
+  "definitionOfDone": [
+    "Requested artifact exists in the real target project.",
+    "Primary flow and relevant edge, failure and interruption states work.",
+    "Compilation, import and runtime logs contain no unexplained errors.",
+    "Authority, persistence, privacy and abuse boundaries are reviewed where relevant.",
+    "Keyboard, controller, touch, localization and reduced-motion behavior are considered where relevant.",
+    "Performance is measured on the weakest intended target rather than assumed.",
+    "Automated or repeatable focused tests pass.",
+    "Final engine state is read back with screenshots, logs, metrics or structured state evidence."
+  ],
+  "evidence": [
+    "before/after project state",
+    "exact tools and affected assets",
+    "focused test output",
+    "clean engine logs",
+    "runtime or visual capture for player-facing changes",
+    "measured performance for material changes"
+  ],
+  "recovery": [
+    "Stop after repeated identical failures and inspect the root cause.",
+    "Never hide errors by deleting validation or weakening acceptance criteria.",
+    "Prefer a minimal rollback-safe fix, then rerun the same reproduction.",
+    "Disclose unresolved limitations instead of claiming completion."
+  ],
+  "engines": {
+    "roblox": [
+      "Use server authority for consequential state and validate/rate-limit remotes.",
+      "Test Edit, Server and Client contexts plus relevant device emulation.",
+      "Review StreamingEnabled, network ownership, DataStore idempotency and mobile budgets where relevant."
+    ],
+    "unity": [
+      "Wait for compilation, read Console errors and run focused EditMode or PlayMode tests.",
+      "Respect serialization, prefab, scene and assembly-definition boundaries.",
+      "Profile representative target hardware and validate build output."
+    ],
+    "godot": [
+      "Validate scene ownership, node paths, signals, resources and autoload lifecycle.",
+      "Run parser/headless checks and inspect debugger output.",
+      "Verify export presets and target-platform behavior."
+    ],
+    "blender": [
+      "Validate scale, axes, transforms, pivots, topology, normals, UVs, materials and naming.",
+      "Meet explicit triangle, texture, rig, animation and LOD budgets.",
+      "Round-trip the exported asset through the target engine."
+    ],
+    "figma": [
+      "Use reusable components, variants, variables, Auto Layout and semantic naming.",
+      "Cover responsive constraints, localization expansion, focus and interaction states.",
+      "Validate implementation handoff rather than stopping at a visual mockup."
+    ],
+    "general": [
+      "Choose tools from verified live schemas and keep cross-engine responsibilities explicit.",
+      "Coordinate art, design, engineering, audio, QA and production around one acceptance target.",
+      "Use milestone, risk, dependency and rollback evidence for meaningful work."
+    ]
+  }
+}

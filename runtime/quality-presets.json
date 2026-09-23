@@ -1,0 +1,95 @@
+{
+  "version": "1.0",
+  "policy": {
+    "simplePromptIsValid": true,
+    "preserveIntent": true,
+    "maximumPresets": 3,
+    "rule": "Use matched presets silently, inspect the project, implement the real artifact immediately, and validate in engine. Never return only the enhanced brief."
+  },
+  "presets": {
+    "roblox-classic-character": {
+      "engines": ["roblox", "blender"],
+      "signals": ["shedletsky", "classic roblox model", "classic character", "old roblox", "retro roblox", "blocky avatar"],
+      "intent": "Create an original classic-Roblox-inspired block character with era-authentic proportions and readable personality without falsely claiming official ownership or copying restricted assets.",
+      "enhancements": ["R6-compatible block proportions or project-compatible equivalent", "clean silhouette and iconic restrained palette", "simple era-appropriate materials with intentional studs/inlets", "animation-ready hierarchy, pivots and naming", "face and accessory treatment readable at gameplay distance", "optimized collision and network-safe runtime setup"],
+      "evidence": ["front/side/gameplay-camera inspection", "hierarchy and pivot readback", "animation or pose smoke test", "clean Studio output"]
+    },
+    "roblox-classic-gui": {
+      "engines": ["roblox"],
+      "signals": ["classic roblox gui", "classic gui", "retro roblox ui", "old roblox ui", "2008 gui", "2010 gui"],
+      "intent": "Build a nostalgic Roblox interface with crisp block construction while retaining modern responsiveness, accessibility and input support.",
+      "enhancements": ["classic beveled panels and restrained blue/gray palette", "pixel-clean borders, readable hierarchy and era-appropriate typography", "reusable component tokens instead of one-off styling", "mouse, keyboard, controller and touch states", "responsive constraints for phone, tablet and desktop", "loading, empty, disabled, focus and error states", "subtle fast feedback without modern visual clutter"],
+      "evidence": ["multiple viewport captures", "controller focus traversal", "touch target check", "UI hierarchy readback"]
+    },
+    "stud-texture-ui-panel": {
+      "engines": ["roblox", "unity", "godot", "figma"],
+      "signals": ["stud texture ui", "studded ui", "stud panel", "stud texture panel", "lego panel", "high quality stud texture"],
+      "intent": "Create a premium studded structural panel whose texture supports hierarchy instead of reducing text readability.",
+      "enhancements": ["consistent believable stud scale and spacing", "soft bevels with controlled highlights and subtle roughness variation", "calm inset plates behind text and controls", "tile-safe texture or procedural material with no visible seams", "cohesive border, corner and depth system", "responsive layout plus hover, focus, pressed, disabled and loading states", "mobile texture and overdraw budget"],
+      "evidence": ["100% and gameplay-scale captures", "seam and tiling inspection", "contrast and focus check", "target-device profile"]
+    },
+    "locomotion-combat-animation-set": {
+      "engines": ["roblox", "unity", "godot", "blender"],
+      "signals": ["walk dash punch", "walk animation", "dash animation", "punch animation", "movement animation", "combat animation", "animation set"],
+      "intent": "Produce a cohesive gameplay animation set with strong posing, responsive timing and reliable transitions.",
+      "enhancements": ["shared pose language, center-of-mass behavior and silhouette rules", "walk contact/down/passing/up poses with planted feet", "dash anticipation, explosive acceleration, readable direction and recoverable exit", "punch anticipation, hip/shoulder rotation, contact frame, follow-through and recovery", "loop phase, root-motion and movement-authority policy", "blend, cancellation, interruption and combo windows", "gameplay events aligned to visible contact", "retargeting, compression and network validation"],
+      "evidence": ["gameplay-camera playback at full and half speed", "transition and interruption matrix", "foot-slide/contact inspection", "runtime state and event readback"]
+    },
+    "professional-ui-system": {
+      "engines": ["roblox", "unity", "godot", "figma"],
+      "signals": ["ui", "gui", "menu", "hud", "shop", "inventory", "panel", "interface"],
+      "intent": "Turn the requested interface into a reusable, responsive and accessible production UI system.",
+      "enhancements": ["clear primary path and visual hierarchy", "design tokens and reusable components", "complete interaction and data states", "keyboard, controller, mouse and touch support", "localization expansion and small-screen resilience", "tasteful motion with reduced-motion behavior", "real data integration and failure recovery"],
+      "evidence": ["primary-flow recording", "state matrix", "viewport and input matrix", "contrast and focus evidence"]
+    },
+    "game-ready-model": {
+      "engines": ["roblox", "unity", "godot", "blender"],
+      "signals": ["model", "mesh", "prop", "character", "weapon", "building", "environment asset"],
+      "intent": "Create a distinctive game-ready asset that is visually coherent, correctly scaled and technically clean.",
+      "enhancements": ["reference-driven silhouette and proportion", "clean topology, normals, UVs, pivots and naming", "cohesive materials and controlled detail hierarchy", "collision, LOD and platform budget", "correct export axes and scale", "target-engine import and gameplay-camera validation"],
+      "evidence": ["turnaround views", "topology/UV/material checks", "engine import readback", "budget measurements"]
+    },
+    "gameplay-combat-system": {
+      "engines": ["roblox", "unity", "godot"],
+      "signals": ["combat", "attack", "weapon", "ability", "damage", "boss fight"],
+      "intent": "Build a responsive, readable and secure combat loop rather than an isolated attack script.",
+      "enhancements": ["authoritative state and damage validation", "data-driven timing, cooldown and balance hooks", "hit/hurt boxes and duplicate-hit protection", "animation, camera, VFX and audio synchronization", "latency, cancellation, interruption and death handling", "input accessibility and clear feedback", "abuse tests and performance instrumentation"],
+      "evidence": ["single and multiplayer scenarios", "invalid/spam tests", "timing capture", "clean logs and profiler evidence"]
+    },
+    "responsive-character-controller": {
+      "engines": ["roblox", "unity", "godot"],
+      "signals": ["movement", "controller", "character controller", "parkour", "jump", "dash mechanic"],
+      "intent": "Create a responsive cross-platform controller with deterministic state and polished game feel.",
+      "enhancements": ["measured acceleration, braking, air control and turn response", "grounding, slopes, steps and moving-platform recovery", "jump buffer and coyote time where suitable", "camera and animation ownership", "mouse, controller and touch mappings", "network authority and reconciliation", "low/high frame-rate edge tests"],
+      "evidence": ["metric test course", "input-device matrix", "edge-geometry capture", "network/frame-rate tests"]
+    },
+    "cinematic-vfx-package": {
+      "engines": ["roblox", "unity", "godot", "blender"],
+      "signals": ["vfx", "effect", "explosion", "magic", "particles", "cinematic"],
+      "intent": "Create readable, art-directed effects with controlled timing and production-safe budgets.",
+      "enhancements": ["clear gameplay purpose and silhouette", "anticipation, impact, sustain and dissipation timing", "layered particles, trails, light, material and camera feedback", "pooling and deterministic cleanup", "bounds, sorting and occlusion validation", "quality tiers and reduced-flash option", "audio synchronization"],
+      "evidence": ["multiple-view capture", "lifecycle and pooling test", "worst-case profile", "quality-tier comparison"]
+    },
+    "production-audio-package": {
+      "engines": ["roblox", "unity", "godot"],
+      "signals": ["audio", "sound", "music", "ambience", "foley", "sfx"],
+      "intent": "Deliver an integrated audio experience with hierarchy, variation, spatial behavior and runtime control.",
+      "enhancements": ["event taxonomy and mix hierarchy", "variation and anti-repetition rules", "spatial attenuation and occlusion policy", "bus/category routing and ducking", "loop, transition and interruption handling", "accessibility and volume controls", "memory, voice and streaming budgets"],
+      "evidence": ["in-context playback", "mix/bus readback", "voice-budget stress test", "loop and transition inspection"]
+    },
+    "secure-save-progression": {
+      "engines": ["roblox", "unity", "godot"],
+      "signals": ["save", "data store", "inventory", "progression", "economy", "currency"],
+      "intent": "Build durable progression with safe transactions, migrations and repair paths.",
+      "enhancements": ["versioned schemas and idempotent migrations", "atomic authoritative transactions", "session/concurrency protection", "retry, timeout and shutdown handling", "anti-duplication validation", "telemetry, backup and repair tooling", "old/corrupt/partial-save fixtures"],
+      "evidence": ["migration fixtures", "concurrency and retry tests", "rollback/repair demonstration", "authoritative state readback"]
+    },
+    "multiplayer-production": {
+      "engines": ["roblox", "unity", "godot"],
+      "signals": ["multiplayer", "network", "remote", "lobby", "party", "matchmaking", "replication"],
+      "intent": "Build a server-authoritative multiplayer feature that remains fair and recoverable under latency and abuse.",
+      "enhancements": ["explicit trust boundaries and ownership", "typed validation, permissions and rate limits", "idempotency, ordering and replay protection", "prediction/reconciliation only where useful", "disconnect, reconnect and host/server failure recovery", "bandwidth and interest-management budgets", "two-client conflict and adversarial tests"],
+      "evidence": ["latency/loss simulation", "spam and invalid-message tests", "bandwidth profile", "multi-client state convergence"]
+    }
+  }
+}

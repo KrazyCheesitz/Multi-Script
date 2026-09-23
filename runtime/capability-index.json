@@ -1,0 +1,2396 @@
+{
+  "version": "4.9.0",
+  "totalSkills": 800,
+  "policy": {
+    "minimumStackSize": 3,
+    "preferredStackSize": 5,
+    "roles": [
+      "design",
+      "implementation",
+      "polish",
+      "optimization",
+      "validation"
+    ],
+    "executionRule": "Selecting skills is preparation. The agent must execute their steps through real connected MCP tools and verify the result."
+  },
+  "engines": {
+    "roblox": {
+      "skillCount": 199,
+      "domains": {
+        "architecture-code": {
+          "skillIds": [
+            "roblox-architecture-services",
+            "roblox-profile-session-locking",
+            "roblox-advanced-architecture-modules",
+            "roblox-advanced-service-layer",
+            "roblox-advanced-dependency-injection",
+            "roblox-advanced-signals-events",
+            "roblox-advanced-ecs-patterns",
+            "roblox-pro-architecture-boundaries",
+            "roblox-pro-dependency-management",
+            "roblox-pro-state-machines",
+            "roblox-pro-event-messaging"
+          ],
+          "roles": {
+            "design": [
+              "roblox-architecture-services",
+              "roblox-advanced-architecture-modules",
+              "roblox-pro-architecture-boundaries",
+              "roblox-pro-dependency-management",
+              "roblox-pro-state-machines",
+              "roblox-pro-event-messaging"
+            ],
+            "implementation": [
+              "roblox-profile-session-locking",
+              "roblox-advanced-service-layer",
+              "roblox-advanced-dependency-injection",
+              "roblox-advanced-signals-events",
+              "roblox-advanced-ecs-patterns"
+            ]
+          }
+        },
+        "persistence-economy": {
+          "skillIds": [
+            "roblox-data-store-safety",
+            "roblox-inventory-system",
+            "roblox-crafting-system",
+            "roblox-monetization-receipts",
+            "roblox-advanced-inventory-system",
+            "roblox-advanced-crafting-system",
+            "roblox-pro-save-schema",
+            "roblox-pro-save-migration",
+            "roblox-pro-inventory",
+            "roblox-pro-items-economy",
+            "roblox-pro-crafting",
+            "roblox-pro-monetization-ethics",
+            "roblox-pro-save-security"
+          ],
+          "roles": {
+            "implementation": [
+              "roblox-data-store-safety",
+              "roblox-inventory-system",
+              "roblox-crafting-system",
+              "roblox-monetization-receipts",
+              "roblox-advanced-inventory-system",
+              "roblox-advanced-crafting-system",
+              "roblox-pro-save-migration",
+              "roblox-pro-inventory",
+              "roblox-pro-items-economy",
+              "roblox-pro-crafting",
+              "roblox-pro-monetization-ethics",
+              "roblox-pro-save-security"
+            ],
+            "design": [
+              "roblox-pro-save-schema"
+            ]
+          }
+        },
+        "multiplayer-networking": {
+          "skillIds": [
+            "roblox-remote-security",
+            "roblox-matchmaking-teleport",
+            "roblox-advanced-matchmaking",
+            "roblox-advanced-party-system",
+            "roblox-advanced-remote-security",
+            "roblox-advanced-server-authority",
+            "roblox-advanced-network-ownership",
+            "roblox-pro-multiplayer-authority",
+            "roblox-pro-matchmaking",
+            "roblox-pro-party-lobby",
+            "roblox-pro-cross-server",
+            "roblox-pro-configuration-flags",
+            "roblox-pro-network-budget"
+          ],
+          "roles": {
+            "implementation": [
+              "roblox-remote-security",
+              "roblox-matchmaking-teleport",
+              "roblox-advanced-matchmaking",
+              "roblox-advanced-remote-security",
+              "roblox-advanced-server-authority",
+              "roblox-advanced-network-ownership",
+              "roblox-pro-multiplayer-authority",
+              "roblox-pro-matchmaking",
+              "roblox-pro-cross-server",
+              "roblox-pro-configuration-flags"
+            ],
+            "polish": [
+              "roblox-advanced-party-system",
+              "roblox-pro-party-lobby"
+            ],
+            "optimization": [
+              "roblox-pro-network-budget"
+            ]
+          }
+        },
+        "testing-release": {
+          "skillIds": [
+            "roblox-anti-exploit",
+            "roblox-automated-testing",
+            "roblox-advanced-release-publishing",
+            "roblox-pro-prediction-reconciliation",
+            "roblox-pro-anti-cheat",
+            "roblox-pro-asset-pipeline",
+            "roblox-pro-automated-testing",
+            "roblox-pro-playtest-research",
+            "roblox-pro-release-rollback",
+            "roblox-pro-build-ci",
+            "roblox-pro-error-recovery"
+          ],
+          "roles": {
+            "implementation": [
+              "roblox-anti-exploit",
+              "roblox-pro-prediction-reconciliation",
+              "roblox-pro-anti-cheat",
+              "roblox-pro-asset-pipeline",
+              "roblox-pro-error-recovery"
+            ],
+            "validation": [
+              "roblox-automated-testing",
+              "roblox-advanced-release-publishing",
+              "roblox-pro-automated-testing",
+              "roblox-pro-playtest-research",
+              "roblox-pro-release-rollback",
+              "roblox-pro-build-ci"
+            ]
+          }
+        },
+        "input-camera-character": {
+          "skillIds": [
+            "roblox-character-controller",
+            "roblox-camera-system",
+            "roblox-cross-platform-input",
+            "roblox-vehicle-system",
+            "roblox-avatar-accessories",
+            "roblox-advanced-vehicle-system",
+            "roblox-advanced-camera-system",
+            "roblox-advanced-input-actions",
+            "roblox-pro-input-abstraction",
+            "roblox-pro-camera",
+            "roblox-pro-character-controller"
+          ],
+          "roles": {
+            "implementation": [
+              "roblox-character-controller",
+              "roblox-camera-system",
+              "roblox-cross-platform-input",
+              "roblox-vehicle-system",
+              "roblox-avatar-accessories",
+              "roblox-advanced-vehicle-system",
+              "roblox-advanced-camera-system",
+              "roblox-advanced-input-actions",
+              "roblox-pro-input-abstraction",
+              "roblox-pro-camera",
+              "roblox-pro-character-controller"
+            ]
+          }
+        },
+        "ui-ux": {
+          "skillIds": [
+            "roblox-responsive-ui",
+            "roblox-accessibility",
+            "roblox-advanced-equipment-system",
+            "roblox-advanced-building-system",
+            "roblox-advanced-accessibility",
+            "roblox-pro-ui-design-system",
+            "roblox-pro-responsive-ui",
+            "roblox-pro-accessibility"
+          ],
+          "roles": {
+            "polish": [
+              "roblox-responsive-ui",
+              "roblox-advanced-equipment-system",
+              "roblox-pro-responsive-ui"
+            ],
+            "implementation": [
+              "roblox-accessibility",
+              "roblox-advanced-accessibility",
+              "roblox-pro-accessibility"
+            ],
+            "validation": [
+              "roblox-advanced-building-system"
+            ],
+            "design": [
+              "roblox-pro-ui-design-system"
+            ]
+          }
+        },
+        "design-production": {
+          "skillIds": [
+            "roblox-quest-system",
+            "roblox-dialogue-system",
+            "roblox-localization",
+            "roblox-analytics-telemetry",
+            "roblox-advanced-quest-system",
+            "roblox-advanced-dialogue-system",
+            "roblox-advanced-localization",
+            "roblox-advanced-analytics-funnels",
+            "roblox-pro-requirements-contract",
+            "roblox-pro-project-discovery",
+            "roblox-pro-game-design-pillars",
+            "roblox-pro-core-loop",
+            "roblox-pro-vertical-slice",
+            "roblox-pro-quests",
+            "roblox-pro-dialogue",
+            "roblox-pro-localization",
+            "roblox-pro-tutorial-onboarding",
+            "roblox-pro-analytics",
+            "roblox-pro-liveops-content",
+            "roblox-pro-modular-content"
+          ],
+          "roles": {
+            "implementation": [
+              "roblox-quest-system",
+              "roblox-dialogue-system",
+              "roblox-localization",
+              "roblox-analytics-telemetry",
+              "roblox-advanced-quest-system",
+              "roblox-advanced-dialogue-system",
+              "roblox-advanced-localization",
+              "roblox-advanced-analytics-funnels",
+              "roblox-pro-core-loop",
+              "roblox-pro-quests",
+              "roblox-pro-dialogue",
+              "roblox-pro-localization",
+              "roblox-pro-analytics",
+              "roblox-pro-liveops-content",
+              "roblox-pro-modular-content"
+            ],
+            "design": [
+              "roblox-pro-requirements-contract",
+              "roblox-pro-project-discovery",
+              "roblox-pro-game-design-pillars",
+              "roblox-pro-vertical-slice"
+            ],
+            "polish": [
+              "roblox-pro-tutorial-onboarding"
+            ]
+          }
+        },
+        "combat-abilities": {
+          "skillIds": [
+            "roblox-melee-combat",
+            "roblox-ranged-combat",
+            "roblox-ability-framework",
+            "roblox-advanced-combat-melee",
+            "roblox-advanced-combat-ranged",
+            "roblox-advanced-ability-system",
+            "roblox-advanced-damage-validation",
+            "roblox-pro-abilities",
+            "roblox-pro-combat",
+            "roblox-pro-telemetry-observability"
+          ],
+          "roles": {
+            "implementation": [
+              "roblox-melee-combat",
+              "roblox-ranged-combat",
+              "roblox-ability-framework",
+              "roblox-advanced-combat-melee",
+              "roblox-advanced-combat-ranged",
+              "roblox-advanced-ability-system",
+              "roblox-advanced-damage-validation",
+              "roblox-pro-abilities",
+              "roblox-pro-combat",
+              "roblox-pro-telemetry-observability"
+            ]
+          }
+        },
+        "ai-navigation": {
+          "skillIds": [
+            "roblox-npc-behavior",
+            "roblox-pathfinding-navigation",
+            "roblox-passes-subscriptions",
+            "roblox-advanced-promise-async",
+            "roblox-advanced-state-machines",
+            "roblox-advanced-data-store-design",
+            "roblox-advanced-profile-store-migration",
+            "roblox-advanced-session-locking",
+            "roblox-advanced-cross-server-messaging",
+            "roblox-advanced-round-system",
+            "roblox-advanced-npc-ai",
+            "roblox-advanced-pathfinding-navigation",
+            "roblox-advanced-anti-exploit",
+            "roblox-advanced-terrain-generation",
+            "roblox-advanced-placement-validation",
+            "roblox-advanced-controller-navigation",
+            "roblox-advanced-shop-commerce",
+            "roblox-advanced-developer-products",
+            "roblox-advanced-game-passes",
+            "roblox-pro-npc-ai",
+            "roblox-pro-navigation"
+          ],
+          "roles": {
+            "implementation": [
+              "roblox-npc-behavior",
+              "roblox-pathfinding-navigation",
+              "roblox-passes-subscriptions",
+              "roblox-advanced-promise-async",
+              "roblox-advanced-state-machines",
+              "roblox-advanced-profile-store-migration",
+              "roblox-advanced-session-locking",
+              "roblox-advanced-cross-server-messaging",
+              "roblox-advanced-round-system",
+              "roblox-advanced-npc-ai",
+              "roblox-advanced-pathfinding-navigation",
+              "roblox-advanced-anti-exploit",
+              "roblox-advanced-terrain-generation",
+              "roblox-advanced-placement-validation",
+              "roblox-advanced-controller-navigation",
+              "roblox-advanced-shop-commerce",
+              "roblox-advanced-developer-products",
+              "roblox-advanced-game-passes",
+              "roblox-pro-navigation"
+            ],
+            "design": [
+              "roblox-advanced-data-store-design"
+            ],
+            "polish": [
+              "roblox-pro-npc-ai"
+            ]
+          }
+        },
+        "world-levels": {
+          "skillIds": [
+            "roblox-procedural-worlds",
+            "roblox-streaming-enabled",
+            "roblox-advanced-streaming-enabled",
+            "roblox-advanced-procedural-worlds",
+            "roblox-pro-procedural-generation",
+            "roblox-pro-world-streaming",
+            "roblox-pro-level-design"
+          ],
+          "roles": {
+            "implementation": [
+              "roblox-procedural-worlds",
+              "roblox-streaming-enabled",
+              "roblox-advanced-streaming-enabled",
+              "roblox-advanced-procedural-worlds",
+              "roblox-pro-procedural-generation",
+              "roblox-pro-world-streaming"
+            ],
+            "design": [
+              "roblox-pro-level-design"
+            ]
+          }
+        },
+        "physics-simulation": {
+          "skillIds": [
+            "roblox-physics-network-ownership",
+            "roblox-pro-vehicles",
+            "roblox-pro-physics"
+          ],
+          "roles": {
+            "implementation": [
+              "roblox-physics-network-ownership",
+              "roblox-pro-vehicles",
+              "roblox-pro-physics"
+            ]
+          }
+        },
+        "performance-platform": {
+          "skillIds": [
+            "roblox-memory-store-messaging",
+            "roblox-performance-profiling",
+            "roblox-mobile-console-qa",
+            "roblox-advanced-memory-store-queues",
+            "roblox-advanced-mobile-controls",
+            "roblox-advanced-performance-profiling",
+            "roblox-advanced-memory-leaks",
+            "roblox-pro-cpu-performance",
+            "roblox-pro-memory-performance",
+            "roblox-pro-gpu-performance",
+            "roblox-pro-mobile-optimization",
+            "roblox-pro-console-pc-optimization"
+          ],
+          "roles": {
+            "optimization": [
+              "roblox-memory-store-messaging",
+              "roblox-performance-profiling",
+              "roblox-advanced-memory-store-queues",
+              "roblox-advanced-performance-profiling",
+              "roblox-advanced-memory-leaks",
+              "roblox-pro-cpu-performance",
+              "roblox-pro-memory-performance",
+              "roblox-pro-gpu-performance",
+              "roblox-pro-mobile-optimization",
+              "roblox-pro-console-pc-optimization"
+            ],
+            "implementation": [
+              "roblox-mobile-console-qa",
+              "roblox-advanced-mobile-controls"
+            ]
+          }
+        },
+        "audio": {
+          "skillIds": [
+            "roblox-audio-vfx-lighting",
+            "roblox-pro-audio"
+          ],
+          "roles": {
+            "polish": [
+              "roblox-audio-vfx-lighting",
+              "roblox-pro-audio"
+            ]
+          }
+        },
+        "vfx": {
+          "skillIds": [
+            "roblox-advanced-status-effects",
+            "roblox-pro-status-effects",
+            "roblox-pro-vfx"
+          ],
+          "roles": {
+            "implementation": [
+              "roblox-advanced-status-effects",
+              "roblox-pro-status-effects"
+            ],
+            "polish": [
+              "roblox-pro-vfx"
+            ]
+          }
+        },
+        "textures-art": {
+          "skillIds": [
+            "roblox-pro-data-modeling",
+            "roblox-pro-lighting-art-direction",
+            "roblox-pro-shaders-materials"
+          ],
+          "roles": {
+            "implementation": [
+              "roblox-pro-data-modeling"
+            ],
+            "polish": [
+              "roblox-pro-lighting-art-direction",
+              "roblox-pro-shaders-materials"
+            ]
+          }
+        },
+        "animation": {
+          "skillIds": [
+            "roblox-pro-animation"
+          ],
+          "roles": {
+            "polish": [
+              "roblox-pro-animation"
+            ]
+          }
+        },
+        "mastery-expansion": {
+          "skillIds": [
+            "roblox-mastery-streaming-diagnostics",
+            "roblox-mastery-parallel-luau-architecture",
+            "roblox-mastery-memory-store-resilience",
+            "roblox-mastery-cross-server-messaging",
+            "roblox-mastery-avatar-systems",
+            "roblox-mastery-ugc-inventory",
+            "roblox-mastery-terrain-generation",
+            "roblox-mastery-spatial-voice-design",
+            "roblox-mastery-server-browser",
+            "roblox-mastery-private-server-tools",
+            "roblox-mastery-anti-cheat-heuristics",
+            "roblox-mastery-data-repair-tooling",
+            "roblox-mastery-live-config-rollout",
+            "roblox-mastery-mobile-controls",
+            "roblox-mastery-console-certification",
+            "roblox-mastery-npc-simulation-lod",
+            "roblox-mastery-physics-ownership",
+            "roblox-mastery-animation-replication",
+            "roblox-mastery-ui-performance",
+            "roblox-mastery-automated-playtests"
+          ],
+          "roles": {
+            "design": [
+              "roblox-mastery-streaming-diagnostics",
+              "roblox-mastery-ugc-inventory",
+              "roblox-mastery-anti-cheat-heuristics",
+              "roblox-mastery-npc-simulation-lod"
+            ],
+            "implementation": [
+              "roblox-mastery-parallel-luau-architecture",
+              "roblox-mastery-terrain-generation",
+              "roblox-mastery-data-repair-tooling",
+              "roblox-mastery-physics-ownership"
+            ],
+            "polish": [
+              "roblox-mastery-memory-store-resilience",
+              "roblox-mastery-spatial-voice-design",
+              "roblox-mastery-live-config-rollout",
+              "roblox-mastery-animation-replication"
+            ],
+            "optimization": [
+              "roblox-mastery-cross-server-messaging",
+              "roblox-mastery-server-browser",
+              "roblox-mastery-mobile-controls",
+              "roblox-mastery-ui-performance"
+            ],
+            "validation": [
+              "roblox-mastery-avatar-systems",
+              "roblox-mastery-private-server-tools",
+              "roblox-mastery-console-certification",
+              "roblox-mastery-automated-playtests"
+            ]
+          }
+        },
+        "studio-craft": {
+          "skillIds": [
+            "roblox-studio-animation-posing",
+            "roblox-studio-animation-timing",
+            "roblox-studio-animation-blending",
+            "roblox-studio-combat-choreography",
+            "roblox-studio-locomotion-sets",
+            "roblox-studio-facial-performance",
+            "roblox-studio-procedural-animation",
+            "roblox-studio-gui-composition",
+            "roblox-studio-gui-microinteractions",
+            "roblox-studio-responsive-gui",
+            "roblox-studio-controller-gui",
+            "roblox-studio-accessible-gui",
+            "roblox-studio-hud-readability",
+            "roblox-studio-shop-conversion-ethics",
+            "roblox-studio-character-art",
+            "roblox-studio-environment-art",
+            "roblox-studio-vfx-readability",
+            "roblox-studio-lighting-mood",
+            "roblox-studio-audio-feedback",
+            "roblox-studio-game-feel",
+            "roblox-studio-camera-polish",
+            "roblox-studio-movement-polish",
+            "roblox-studio-combat-feedback",
+            "roblox-studio-mobile-polish",
+            "roblox-studio-network-polish",
+            "roblox-studio-save-resilience",
+            "roblox-studio-economy-clarity",
+            "roblox-studio-tutorial-craft",
+            "roblox-studio-playtest-iteration",
+            "roblox-studio-release-craft"
+          ],
+          "roles": {
+            "design": [
+              "roblox-studio-animation-posing",
+              "roblox-studio-facial-performance",
+              "roblox-studio-controller-gui",
+              "roblox-studio-environment-art",
+              "roblox-studio-camera-polish",
+              "roblox-studio-save-resilience"
+            ],
+            "implementation": [
+              "roblox-studio-animation-timing",
+              "roblox-studio-procedural-animation",
+              "roblox-studio-accessible-gui",
+              "roblox-studio-vfx-readability",
+              "roblox-studio-movement-polish",
+              "roblox-studio-economy-clarity"
+            ],
+            "polish": [
+              "roblox-studio-animation-blending",
+              "roblox-studio-gui-composition",
+              "roblox-studio-hud-readability",
+              "roblox-studio-lighting-mood",
+              "roblox-studio-combat-feedback",
+              "roblox-studio-tutorial-craft"
+            ],
+            "optimization": [
+              "roblox-studio-combat-choreography",
+              "roblox-studio-gui-microinteractions",
+              "roblox-studio-shop-conversion-ethics",
+              "roblox-studio-audio-feedback",
+              "roblox-studio-mobile-polish",
+              "roblox-studio-playtest-iteration"
+            ],
+            "validation": [
+              "roblox-studio-locomotion-sets",
+              "roblox-studio-responsive-gui",
+              "roblox-studio-character-art",
+              "roblox-studio-game-feel",
+              "roblox-studio-network-polish",
+              "roblox-studio-release-craft"
+            ]
+          }
+        }
+      }
+    },
+    "unity": {
+      "skillCount": 148,
+      "domains": {
+        "architecture-code": {
+          "skillIds": [
+            "unity-project-architecture",
+            "unity-serialization-migrations",
+            "unity-dots-ecs",
+            "unity-package-management",
+            "unity-pro-architecture-boundaries",
+            "unity-pro-dependency-management",
+            "unity-pro-state-machines",
+            "unity-pro-event-messaging"
+          ],
+          "roles": {
+            "design": [
+              "unity-project-architecture",
+              "unity-pro-architecture-boundaries",
+              "unity-pro-dependency-management",
+              "unity-pro-state-machines",
+              "unity-pro-event-messaging"
+            ],
+            "implementation": [
+              "unity-serialization-migrations",
+              "unity-dots-ecs",
+              "unity-package-management"
+            ]
+          }
+        },
+        "world-levels": {
+          "skillIds": [
+            "unity-scene-management",
+            "unity-procedural-generation",
+            "unity-pro-procedural-generation",
+            "unity-pro-world-streaming",
+            "unity-pro-level-design"
+          ],
+          "roles": {
+            "implementation": [
+              "unity-scene-management",
+              "unity-procedural-generation",
+              "unity-pro-procedural-generation",
+              "unity-pro-world-streaming"
+            ],
+            "design": [
+              "unity-pro-level-design"
+            ]
+          }
+        },
+        "design-production": {
+          "skillIds": [
+            "unity-prefab-workflows",
+            "unity-localization",
+            "unity-pro-requirements-contract",
+            "unity-pro-project-discovery",
+            "unity-pro-game-design-pillars",
+            "unity-pro-core-loop",
+            "unity-pro-vertical-slice",
+            "unity-pro-quests",
+            "unity-pro-dialogue",
+            "unity-pro-localization",
+            "unity-pro-tutorial-onboarding",
+            "unity-pro-analytics",
+            "unity-pro-liveops-content",
+            "unity-pro-modular-content"
+          ],
+          "roles": {
+            "implementation": [
+              "unity-prefab-workflows",
+              "unity-localization",
+              "unity-pro-core-loop",
+              "unity-pro-quests",
+              "unity-pro-dialogue",
+              "unity-pro-localization",
+              "unity-pro-analytics",
+              "unity-pro-liveops-content",
+              "unity-pro-modular-content"
+            ],
+            "design": [
+              "unity-pro-requirements-contract",
+              "unity-pro-project-discovery",
+              "unity-pro-game-design-pillars",
+              "unity-pro-vertical-slice"
+            ],
+            "polish": [
+              "unity-pro-tutorial-onboarding"
+            ]
+          }
+        },
+        "testing-release": {
+          "skillIds": [
+            "unity-scriptable-objects",
+            "unity-assembly-definitions",
+            "unity-cinemachine",
+            "unity-addressables",
+            "unity-build-pipeline",
+            "unity-test-framework",
+            "unity-pro-prediction-reconciliation",
+            "unity-pro-anti-cheat",
+            "unity-pro-asset-pipeline",
+            "unity-pro-automated-testing",
+            "unity-pro-playtest-research",
+            "unity-pro-release-rollback",
+            "unity-pro-build-ci",
+            "unity-pro-error-recovery"
+          ],
+          "roles": {
+            "implementation": [
+              "unity-scriptable-objects",
+              "unity-assembly-definitions",
+              "unity-cinemachine",
+              "unity-addressables",
+              "unity-pro-prediction-reconciliation",
+              "unity-pro-anti-cheat",
+              "unity-pro-asset-pipeline",
+              "unity-pro-error-recovery"
+            ],
+            "validation": [
+              "unity-build-pipeline",
+              "unity-test-framework",
+              "unity-pro-automated-testing",
+              "unity-pro-playtest-research",
+              "unity-pro-release-rollback",
+              "unity-pro-build-ci"
+            ]
+          }
+        },
+        "input-camera-character": {
+          "skillIds": [
+            "unity-input-system",
+            "unity-pro-input-abstraction",
+            "unity-pro-camera",
+            "unity-pro-character-controller"
+          ],
+          "roles": {
+            "implementation": [
+              "unity-input-system",
+              "unity-pro-input-abstraction",
+              "unity-pro-camera",
+              "unity-pro-character-controller"
+            ]
+          }
+        },
+        "ui-ux": {
+          "skillIds": [
+            "unity-ugui",
+            "unity-ui-toolkit",
+            "unity-editor-tooling",
+            "unity-pro-ui-design-system",
+            "unity-pro-responsive-ui",
+            "unity-pro-accessibility"
+          ],
+          "roles": {
+            "polish": [
+              "unity-ugui",
+              "unity-ui-toolkit",
+              "unity-pro-responsive-ui"
+            ],
+            "implementation": [
+              "unity-editor-tooling",
+              "unity-pro-accessibility"
+            ],
+            "design": [
+              "unity-pro-ui-design-system"
+            ]
+          }
+        },
+        "animation": {
+          "skillIds": [
+            "unity-animator-state-machines",
+            "unity-playables-timeline",
+            "unity-xr-interaction",
+            "unity-pro-animation"
+          ],
+          "roles": {
+            "implementation": [
+              "unity-animator-state-machines",
+              "unity-playables-timeline",
+              "unity-xr-interaction"
+            ],
+            "polish": [
+              "unity-pro-animation"
+            ]
+          }
+        },
+        "physics-simulation": {
+          "skillIds": [
+            "unity-physics",
+            "unity-pro-vehicles",
+            "unity-pro-physics"
+          ],
+          "roles": {
+            "implementation": [
+              "unity-physics",
+              "unity-pro-vehicles",
+              "unity-pro-physics"
+            ]
+          }
+        },
+        "ai-navigation": {
+          "skillIds": [
+            "unity-navigation-ai",
+            "unity-pro-npc-ai",
+            "unity-pro-navigation"
+          ],
+          "roles": {
+            "implementation": [
+              "unity-navigation-ai",
+              "unity-pro-navigation"
+            ],
+            "polish": [
+              "unity-pro-npc-ai"
+            ]
+          }
+        },
+        "textures-art": {
+          "skillIds": [
+            "unity-urp-rendering",
+            "unity-hdrp-rendering",
+            "unity-shader-graph",
+            "unity-terrain-worldbuilding",
+            "unity-pro-data-modeling",
+            "unity-pro-lighting-art-direction",
+            "unity-pro-shaders-materials"
+          ],
+          "roles": {
+            "implementation": [
+              "unity-urp-rendering",
+              "unity-hdrp-rendering",
+              "unity-pro-data-modeling"
+            ],
+            "polish": [
+              "unity-shader-graph",
+              "unity-pro-lighting-art-direction",
+              "unity-pro-shaders-materials"
+            ],
+            "validation": [
+              "unity-terrain-worldbuilding"
+            ]
+          }
+        },
+        "vfx": {
+          "skillIds": [
+            "unity-vfx-graph",
+            "unity-pro-status-effects",
+            "unity-pro-vfx"
+          ],
+          "roles": {
+            "polish": [
+              "unity-vfx-graph",
+              "unity-pro-vfx"
+            ],
+            "implementation": [
+              "unity-pro-status-effects"
+            ]
+          }
+        },
+        "persistence-economy": {
+          "skillIds": [
+            "unity-save-system",
+            "unity-pro-save-schema",
+            "unity-pro-save-migration",
+            "unity-pro-inventory",
+            "unity-pro-items-economy",
+            "unity-pro-crafting",
+            "unity-pro-monetization-ethics",
+            "unity-pro-save-security"
+          ],
+          "roles": {
+            "implementation": [
+              "unity-save-system",
+              "unity-pro-save-migration",
+              "unity-pro-inventory",
+              "unity-pro-items-economy",
+              "unity-pro-crafting",
+              "unity-pro-monetization-ethics",
+              "unity-pro-save-security"
+            ],
+            "design": [
+              "unity-pro-save-schema"
+            ]
+          }
+        },
+        "multiplayer-networking": {
+          "skillIds": [
+            "unity-netcode",
+            "unity-pro-multiplayer-authority",
+            "unity-pro-matchmaking",
+            "unity-pro-party-lobby",
+            "unity-pro-cross-server",
+            "unity-pro-configuration-flags",
+            "unity-pro-network-budget"
+          ],
+          "roles": {
+            "implementation": [
+              "unity-netcode",
+              "unity-pro-multiplayer-authority",
+              "unity-pro-matchmaking",
+              "unity-pro-cross-server",
+              "unity-pro-configuration-flags"
+            ],
+            "polish": [
+              "unity-pro-party-lobby"
+            ],
+            "optimization": [
+              "unity-pro-network-budget"
+            ]
+          }
+        },
+        "audio": {
+          "skillIds": [
+            "unity-audio-mixer",
+            "unity-pro-audio"
+          ],
+          "roles": {
+            "polish": [
+              "unity-audio-mixer",
+              "unity-pro-audio"
+            ]
+          }
+        },
+        "performance-platform": {
+          "skillIds": [
+            "unity-profiler-memory",
+            "unity-platform-optimization",
+            "unity-pro-cpu-performance",
+            "unity-pro-memory-performance",
+            "unity-pro-gpu-performance",
+            "unity-pro-mobile-optimization",
+            "unity-pro-console-pc-optimization"
+          ],
+          "roles": {
+            "optimization": [
+              "unity-profiler-memory",
+              "unity-platform-optimization",
+              "unity-pro-cpu-performance",
+              "unity-pro-memory-performance",
+              "unity-pro-gpu-performance",
+              "unity-pro-mobile-optimization",
+              "unity-pro-console-pc-optimization"
+            ]
+          }
+        },
+        "combat-abilities": {
+          "skillIds": [
+            "unity-pro-abilities",
+            "unity-pro-combat",
+            "unity-pro-telemetry-observability"
+          ],
+          "roles": {
+            "implementation": [
+              "unity-pro-abilities",
+              "unity-pro-combat",
+              "unity-pro-telemetry-observability"
+            ]
+          }
+        },
+        "mastery-expansion": {
+          "skillIds": [
+            "unity-mastery-addressables-diagnostics",
+            "unity-mastery-ecs-gameplay",
+            "unity-mastery-burst-jobs-optimization",
+            "unity-mastery-render-graph",
+            "unity-mastery-cinemachine-production",
+            "unity-mastery-timeline-cinematics",
+            "unity-mastery-input-rebinding",
+            "unity-mastery-netcode-prediction",
+            "unity-mastery-cloud-save-migration",
+            "unity-mastery-editor-validation",
+            "unity-mastery-asset-postprocessors",
+            "unity-mastery-shader-variant-control",
+            "unity-mastery-memory-profiler",
+            "unity-mastery-build-automation",
+            "unity-mastery-mobile-adaptive-quality",
+            "unity-mastery-xr-interaction",
+            "unity-mastery-terrain-streaming",
+            "unity-mastery-navmesh-links",
+            "unity-mastery-audio-snapshots",
+            "unity-mastery-playmode-testing"
+          ],
+          "roles": {
+            "design": [
+              "unity-mastery-addressables-diagnostics",
+              "unity-mastery-timeline-cinematics",
+              "unity-mastery-asset-postprocessors",
+              "unity-mastery-xr-interaction"
+            ],
+            "implementation": [
+              "unity-mastery-ecs-gameplay",
+              "unity-mastery-input-rebinding",
+              "unity-mastery-shader-variant-control",
+              "unity-mastery-terrain-streaming"
+            ],
+            "polish": [
+              "unity-mastery-burst-jobs-optimization",
+              "unity-mastery-netcode-prediction",
+              "unity-mastery-memory-profiler",
+              "unity-mastery-navmesh-links"
+            ],
+            "optimization": [
+              "unity-mastery-render-graph",
+              "unity-mastery-cloud-save-migration",
+              "unity-mastery-build-automation",
+              "unity-mastery-audio-snapshots"
+            ],
+            "validation": [
+              "unity-mastery-cinemachine-production",
+              "unity-mastery-editor-validation",
+              "unity-mastery-mobile-adaptive-quality",
+              "unity-mastery-playmode-testing"
+            ]
+          }
+        },
+        "studio-craft": {
+          "skillIds": [
+            "unity-studio-animation-rigging",
+            "unity-studio-animator-architecture",
+            "unity-studio-cinemachine-craft",
+            "unity-studio-timeline-direction",
+            "unity-studio-combat-choreography",
+            "unity-studio-locomotion-blending",
+            "unity-studio-facial-performance",
+            "unity-studio-ui-toolkit-craft",
+            "unity-studio-ugui-composition",
+            "unity-studio-ui-motion",
+            "unity-studio-responsive-ui",
+            "unity-studio-controller-ux",
+            "unity-studio-accessible-ui",
+            "unity-studio-shader-graph-art",
+            "unity-studio-vfx-graph-art",
+            "unity-studio-lighting-craft",
+            "unity-studio-environment-composition",
+            "unity-studio-character-presentation",
+            "unity-studio-audio-feedback",
+            "unity-studio-game-feel",
+            "unity-studio-camera-polish",
+            "unity-studio-movement-tuning",
+            "unity-studio-combat-tuning",
+            "unity-studio-addressables-craft",
+            "unity-studio-mobile-rendering",
+            "unity-studio-netcode-feel",
+            "unity-studio-tutorial-craft",
+            "unity-studio-playtest-iteration",
+            "unity-studio-profiling-discipline",
+            "unity-studio-release-craft"
+          ],
+          "roles": {
+            "design": [
+              "unity-studio-animation-rigging",
+              "unity-studio-locomotion-blending",
+              "unity-studio-responsive-ui",
+              "unity-studio-lighting-craft",
+              "unity-studio-camera-polish",
+              "unity-studio-netcode-feel"
+            ],
+            "implementation": [
+              "unity-studio-animator-architecture",
+              "unity-studio-facial-performance",
+              "unity-studio-controller-ux",
+              "unity-studio-environment-composition",
+              "unity-studio-movement-tuning",
+              "unity-studio-tutorial-craft"
+            ],
+            "polish": [
+              "unity-studio-cinemachine-craft",
+              "unity-studio-ui-toolkit-craft",
+              "unity-studio-accessible-ui",
+              "unity-studio-character-presentation",
+              "unity-studio-combat-tuning",
+              "unity-studio-playtest-iteration"
+            ],
+            "optimization": [
+              "unity-studio-timeline-direction",
+              "unity-studio-ugui-composition",
+              "unity-studio-shader-graph-art",
+              "unity-studio-audio-feedback",
+              "unity-studio-addressables-craft",
+              "unity-studio-profiling-discipline"
+            ],
+            "validation": [
+              "unity-studio-combat-choreography",
+              "unity-studio-ui-motion",
+              "unity-studio-vfx-graph-art",
+              "unity-studio-game-feel",
+              "unity-studio-mobile-rendering",
+              "unity-studio-release-craft"
+            ]
+          }
+        }
+      }
+    },
+    "godot": {
+      "skillCount": 147,
+      "domains": {
+        "architecture-code": {
+          "skillIds": [
+            "godot-project-architecture",
+            "godot-signals-events",
+            "godot-autoload-services",
+            "godot-pro-architecture-boundaries",
+            "godot-pro-dependency-management",
+            "godot-pro-state-machines",
+            "godot-pro-event-messaging"
+          ],
+          "roles": {
+            "design": [
+              "godot-project-architecture",
+              "godot-pro-architecture-boundaries",
+              "godot-pro-dependency-management",
+              "godot-pro-state-machines",
+              "godot-pro-event-messaging"
+            ],
+            "implementation": [
+              "godot-signals-events",
+              "godot-autoload-services"
+            ]
+          }
+        },
+        "world-levels": {
+          "skillIds": [
+            "godot-scene-composition",
+            "godot-tilemap-2d",
+            "godot-gridmap-3d",
+            "godot-procedural-generation",
+            "godot-pro-procedural-generation",
+            "godot-pro-world-streaming",
+            "godot-pro-level-design"
+          ],
+          "roles": {
+            "implementation": [
+              "godot-scene-composition",
+              "godot-tilemap-2d",
+              "godot-gridmap-3d",
+              "godot-procedural-generation",
+              "godot-pro-procedural-generation",
+              "godot-pro-world-streaming"
+            ],
+            "design": [
+              "godot-pro-level-design"
+            ]
+          }
+        },
+        "ai-navigation": {
+          "skillIds": [
+            "godot-gdscript-style",
+            "godot-navigation",
+            "godot-pro-npc-ai",
+            "godot-pro-navigation"
+          ],
+          "roles": {
+            "implementation": [
+              "godot-gdscript-style",
+              "godot-navigation",
+              "godot-pro-navigation"
+            ],
+            "polish": [
+              "godot-pro-npc-ai"
+            ]
+          }
+        },
+        "testing-release": {
+          "skillIds": [
+            "godot-csharp-integration",
+            "godot-groups-composition",
+            "godot-export-pipeline",
+            "godot-gut-testing",
+            "godot-import-pipeline",
+            "godot-pro-prediction-reconciliation",
+            "godot-pro-anti-cheat",
+            "godot-pro-asset-pipeline",
+            "godot-pro-automated-testing",
+            "godot-pro-playtest-research",
+            "godot-pro-release-rollback",
+            "godot-pro-build-ci",
+            "godot-pro-error-recovery"
+          ],
+          "roles": {
+            "implementation": [
+              "godot-csharp-integration",
+              "godot-groups-composition",
+              "godot-export-pipeline",
+              "godot-import-pipeline",
+              "godot-pro-prediction-reconciliation",
+              "godot-pro-anti-cheat",
+              "godot-pro-asset-pipeline",
+              "godot-pro-error-recovery"
+            ],
+            "validation": [
+              "godot-gut-testing",
+              "godot-pro-automated-testing",
+              "godot-pro-playtest-research",
+              "godot-pro-release-rollback",
+              "godot-pro-build-ci"
+            ]
+          }
+        },
+        "design-production": {
+          "skillIds": [
+            "godot-resources-data",
+            "godot-localization",
+            "godot-editor-plugins",
+            "godot-pro-requirements-contract",
+            "godot-pro-project-discovery",
+            "godot-pro-game-design-pillars",
+            "godot-pro-core-loop",
+            "godot-pro-vertical-slice",
+            "godot-pro-quests",
+            "godot-pro-dialogue",
+            "godot-pro-localization",
+            "godot-pro-tutorial-onboarding",
+            "godot-pro-analytics",
+            "godot-pro-liveops-content",
+            "godot-pro-modular-content"
+          ],
+          "roles": {
+            "implementation": [
+              "godot-resources-data",
+              "godot-localization",
+              "godot-editor-plugins",
+              "godot-pro-core-loop",
+              "godot-pro-quests",
+              "godot-pro-dialogue",
+              "godot-pro-localization",
+              "godot-pro-analytics",
+              "godot-pro-liveops-content",
+              "godot-pro-modular-content"
+            ],
+            "design": [
+              "godot-pro-requirements-contract",
+              "godot-pro-project-discovery",
+              "godot-pro-game-design-pillars",
+              "godot-pro-vertical-slice"
+            ],
+            "polish": [
+              "godot-pro-tutorial-onboarding"
+            ]
+          }
+        },
+        "input-camera-character": {
+          "skillIds": [
+            "godot-input-map",
+            "godot-characterbody-2d",
+            "godot-characterbody-3d",
+            "godot-pro-input-abstraction",
+            "godot-pro-camera",
+            "godot-pro-character-controller"
+          ],
+          "roles": {
+            "implementation": [
+              "godot-input-map",
+              "godot-characterbody-2d",
+              "godot-characterbody-3d",
+              "godot-pro-input-abstraction",
+              "godot-pro-camera",
+              "godot-pro-character-controller"
+            ]
+          }
+        },
+        "ui-ux": {
+          "skillIds": [
+            "godot-control-ui",
+            "godot-uid-resource-moves",
+            "godot-accessibility",
+            "godot-pro-ui-design-system",
+            "godot-pro-responsive-ui",
+            "godot-pro-accessibility"
+          ],
+          "roles": {
+            "polish": [
+              "godot-control-ui",
+              "godot-uid-resource-moves",
+              "godot-pro-responsive-ui"
+            ],
+            "implementation": [
+              "godot-accessibility",
+              "godot-pro-accessibility"
+            ],
+            "design": [
+              "godot-pro-ui-design-system"
+            ]
+          }
+        },
+        "animation": {
+          "skillIds": [
+            "godot-animation-player-tree",
+            "godot-pro-animation"
+          ],
+          "roles": {
+            "polish": [
+              "godot-animation-player-tree",
+              "godot-pro-animation"
+            ]
+          }
+        },
+        "physics-simulation": {
+          "skillIds": [
+            "godot-physics-2d",
+            "godot-physics-3d",
+            "godot-pro-vehicles",
+            "godot-pro-physics"
+          ],
+          "roles": {
+            "implementation": [
+              "godot-physics-2d",
+              "godot-physics-3d",
+              "godot-pro-vehicles",
+              "godot-pro-physics"
+            ]
+          }
+        },
+        "textures-art": {
+          "skillIds": [
+            "godot-shader-language",
+            "godot-pro-data-modeling",
+            "godot-pro-lighting-art-direction",
+            "godot-pro-shaders-materials"
+          ],
+          "roles": {
+            "polish": [
+              "godot-shader-language",
+              "godot-pro-lighting-art-direction",
+              "godot-pro-shaders-materials"
+            ],
+            "implementation": [
+              "godot-pro-data-modeling"
+            ]
+          }
+        },
+        "performance-platform": {
+          "skillIds": [
+            "godot-gpu-particles",
+            "godot-debugger-profiler",
+            "godot-web-mobile-optimization",
+            "godot-pro-cpu-performance",
+            "godot-pro-memory-performance",
+            "godot-pro-gpu-performance",
+            "godot-pro-mobile-optimization"
+          ],
+          "roles": {
+            "optimization": [
+              "godot-gpu-particles",
+              "godot-web-mobile-optimization",
+              "godot-pro-cpu-performance",
+              "godot-pro-memory-performance",
+              "godot-pro-gpu-performance",
+              "godot-pro-mobile-optimization"
+            ],
+            "validation": [
+              "godot-debugger-profiler"
+            ]
+          }
+        },
+        "audio": {
+          "skillIds": [
+            "godot-audio-buses",
+            "godot-pro-audio"
+          ],
+          "roles": {
+            "polish": [
+              "godot-audio-buses",
+              "godot-pro-audio"
+            ]
+          }
+        },
+        "persistence-economy": {
+          "skillIds": [
+            "godot-save-system",
+            "godot-pro-save-schema",
+            "godot-pro-save-migration",
+            "godot-pro-inventory",
+            "godot-pro-items-economy",
+            "godot-pro-crafting",
+            "godot-pro-monetization-ethics",
+            "godot-pro-save-security"
+          ],
+          "roles": {
+            "implementation": [
+              "godot-save-system",
+              "godot-pro-save-migration",
+              "godot-pro-inventory",
+              "godot-pro-items-economy",
+              "godot-pro-crafting",
+              "godot-pro-monetization-ethics",
+              "godot-pro-save-security"
+            ],
+            "design": [
+              "godot-pro-save-schema"
+            ]
+          }
+        },
+        "multiplayer-networking": {
+          "skillIds": [
+            "godot-multiplayer-api",
+            "godot-pro-multiplayer-authority",
+            "godot-pro-matchmaking",
+            "godot-pro-party-lobby",
+            "godot-pro-cross-server",
+            "godot-pro-configuration-flags",
+            "godot-pro-network-budget"
+          ],
+          "roles": {
+            "implementation": [
+              "godot-multiplayer-api",
+              "godot-pro-multiplayer-authority",
+              "godot-pro-matchmaking",
+              "godot-pro-cross-server",
+              "godot-pro-configuration-flags"
+            ],
+            "polish": [
+              "godot-pro-party-lobby"
+            ],
+            "optimization": [
+              "godot-pro-network-budget"
+            ]
+          }
+        },
+        "combat-abilities": {
+          "skillIds": [
+            "godot-pro-abilities",
+            "godot-pro-combat",
+            "godot-pro-telemetry-observability"
+          ],
+          "roles": {
+            "implementation": [
+              "godot-pro-abilities",
+              "godot-pro-combat",
+              "godot-pro-telemetry-observability"
+            ]
+          }
+        },
+        "vfx": {
+          "skillIds": [
+            "godot-pro-status-effects",
+            "godot-pro-vfx"
+          ],
+          "roles": {
+            "implementation": [
+              "godot-pro-status-effects"
+            ],
+            "polish": [
+              "godot-pro-vfx"
+            ]
+          }
+        },
+        "mastery-expansion": {
+          "skillIds": [
+            "godot-mastery-scene-ownership",
+            "godot-mastery-typed-gdscript-architecture",
+            "godot-mastery-resource-migrations",
+            "godot-mastery-signal-debugging",
+            "godot-mastery-multiplayer-authority",
+            "godot-mastery-rollback-prediction",
+            "godot-mastery-navigation-agents",
+            "godot-mastery-shader-profiling",
+            "godot-mastery-gpu-particle-budgets",
+            "godot-mastery-tilemap-streaming",
+            "godot-mastery-editor-plugins",
+            "godot-mastery-export-automation",
+            "godot-mastery-web-optimization",
+            "godot-mastery-mobile-input",
+            "godot-mastery-audio-bus-mixing",
+            "godot-mastery-animation-tree-debugging",
+            "godot-mastery-physics-determinism",
+            "godot-mastery-save-repair",
+            "godot-mastery-localization-pipeline",
+            "godot-mastery-headless-testing"
+          ],
+          "roles": {
+            "design": [
+              "godot-mastery-scene-ownership",
+              "godot-mastery-rollback-prediction",
+              "godot-mastery-editor-plugins",
+              "godot-mastery-animation-tree-debugging"
+            ],
+            "implementation": [
+              "godot-mastery-typed-gdscript-architecture",
+              "godot-mastery-navigation-agents",
+              "godot-mastery-export-automation",
+              "godot-mastery-physics-determinism"
+            ],
+            "polish": [
+              "godot-mastery-resource-migrations",
+              "godot-mastery-shader-profiling",
+              "godot-mastery-web-optimization",
+              "godot-mastery-save-repair"
+            ],
+            "optimization": [
+              "godot-mastery-signal-debugging",
+              "godot-mastery-gpu-particle-budgets",
+              "godot-mastery-mobile-input",
+              "godot-mastery-localization-pipeline"
+            ],
+            "validation": [
+              "godot-mastery-multiplayer-authority",
+              "godot-mastery-tilemap-streaming",
+              "godot-mastery-audio-bus-mixing",
+              "godot-mastery-headless-testing"
+            ]
+          }
+        },
+        "studio-craft": {
+          "skillIds": [
+            "godot-studio-animation-tree-craft",
+            "godot-studio-animation-player-craft",
+            "godot-studio-combat-choreography",
+            "godot-studio-locomotion-blending",
+            "godot-studio-procedural-motion",
+            "godot-studio-camera-craft",
+            "godot-studio-control-ui-composition",
+            "godot-studio-theme-systems",
+            "godot-studio-ui-motion",
+            "godot-studio-responsive-control-layouts",
+            "godot-studio-controller-focus",
+            "godot-studio-accessible-ui",
+            "godot-studio-shader-art",
+            "godot-studio-particle-art",
+            "godot-studio-lighting-craft",
+            "godot-studio-environment-composition",
+            "godot-studio-character-presentation",
+            "godot-studio-audio-bus-craft",
+            "godot-studio-game-feel",
+            "godot-studio-movement-tuning",
+            "godot-studio-combat-tuning",
+            "godot-studio-multiplayer-feel",
+            "godot-studio-resource-discipline",
+            "godot-studio-mobile-rendering",
+            "godot-studio-web-rendering",
+            "godot-studio-tutorial-craft",
+            "godot-studio-playtest-iteration",
+            "godot-studio-profiler-discipline",
+            "godot-studio-export-quality",
+            "godot-studio-release-craft"
+          ],
+          "roles": {
+            "design": [
+              "godot-studio-animation-tree-craft",
+              "godot-studio-camera-craft",
+              "godot-studio-controller-focus",
+              "godot-studio-environment-composition",
+              "godot-studio-combat-tuning",
+              "godot-studio-tutorial-craft"
+            ],
+            "implementation": [
+              "godot-studio-animation-player-craft",
+              "godot-studio-control-ui-composition",
+              "godot-studio-accessible-ui",
+              "godot-studio-character-presentation",
+              "godot-studio-multiplayer-feel",
+              "godot-studio-playtest-iteration"
+            ],
+            "polish": [
+              "godot-studio-combat-choreography",
+              "godot-studio-theme-systems",
+              "godot-studio-shader-art",
+              "godot-studio-audio-bus-craft",
+              "godot-studio-resource-discipline",
+              "godot-studio-profiler-discipline"
+            ],
+            "optimization": [
+              "godot-studio-locomotion-blending",
+              "godot-studio-ui-motion",
+              "godot-studio-particle-art",
+              "godot-studio-game-feel",
+              "godot-studio-mobile-rendering",
+              "godot-studio-export-quality"
+            ],
+            "validation": [
+              "godot-studio-procedural-motion",
+              "godot-studio-responsive-control-layouts",
+              "godot-studio-lighting-craft",
+              "godot-studio-movement-tuning",
+              "godot-studio-web-rendering",
+              "godot-studio-release-craft"
+            ]
+          }
+        }
+      }
+    },
+    "blender": {
+      "skillCount": 100,
+      "domains": {
+        "textures-art": {
+          "skillIds": [
+            "blender-project-setup",
+            "blender-unit-scale",
+            "blender-reference-blockout",
+            "blender-hard-surface-modeling",
+            "blender-subdivision-modeling",
+            "blender-low-poly-modeling",
+            "blender-sculpt-retopology",
+            "blender-topology-cleanup",
+            "blender-normal-workflow",
+            "blender-uv-unwrapping",
+            "blender-uv-packing",
+            "blender-trim-sheets",
+            "blender-texture-atlas",
+            "blender-pbr-materials",
+            "blender-procedural-materials",
+            "blender-shader-nodes",
+            "blender-texture-baking",
+            "blender-normal-baking",
+            "blender-ao-curvature-baking",
+            "blender-decal-workflow",
+            "blender-stud-texture",
+            "blender-stylized-textures",
+            "blender-geometry-nodes",
+            "blender-modular-kits",
+            "blender-foliage-assets",
+            "blender-character-modeling",
+            "blender-shape-keys",
+            "blender-nla-workflow",
+            "blender-lighting-lookdev",
+            "blender-render-preview",
+            "blender-lod-generation",
+            "blender-collision-meshes",
+            "blender-collection-organization",
+            "blender-naming-conventions",
+            "blender-asset-browser",
+            "blender-batch-validation"
+          ],
+          "roles": {
+            "implementation": [
+              "blender-project-setup",
+              "blender-unit-scale",
+              "blender-reference-blockout",
+              "blender-hard-surface-modeling",
+              "blender-subdivision-modeling",
+              "blender-low-poly-modeling",
+              "blender-sculpt-retopology",
+              "blender-topology-cleanup",
+              "blender-normal-workflow",
+              "blender-uv-unwrapping",
+              "blender-uv-packing",
+              "blender-trim-sheets",
+              "blender-pbr-materials",
+              "blender-procedural-materials",
+              "blender-normal-baking",
+              "blender-ao-curvature-baking",
+              "blender-decal-workflow",
+              "blender-geometry-nodes",
+              "blender-modular-kits",
+              "blender-foliage-assets",
+              "blender-character-modeling",
+              "blender-shape-keys",
+              "blender-nla-workflow",
+              "blender-lod-generation",
+              "blender-collision-meshes",
+              "blender-collection-organization",
+              "blender-naming-conventions",
+              "blender-asset-browser",
+              "blender-batch-validation"
+            ],
+            "polish": [
+              "blender-texture-atlas",
+              "blender-shader-nodes",
+              "blender-texture-baking",
+              "blender-stud-texture",
+              "blender-stylized-textures",
+              "blender-lighting-lookdev"
+            ],
+            "validation": [
+              "blender-render-preview"
+            ]
+          }
+        },
+        "testing-release": {
+          "skillIds": [
+            "blender-procedural-buildings",
+            "blender-fbx-export",
+            "blender-gltf-export",
+            "blender-roblox-export",
+            "blender-unity-export",
+            "blender-godot-export"
+          ],
+          "roles": {
+            "validation": [
+              "blender-procedural-buildings"
+            ],
+            "implementation": [
+              "blender-fbx-export",
+              "blender-gltf-export",
+              "blender-roblox-export",
+              "blender-unity-export",
+              "blender-godot-export"
+            ]
+          }
+        },
+        "world-levels": {
+          "skillIds": [
+            "blender-procedural-props",
+            "blender-environment-assets"
+          ],
+          "roles": {
+            "implementation": [
+              "blender-procedural-props",
+              "blender-environment-assets"
+            ]
+          }
+        },
+        "animation": {
+          "skillIds": [
+            "blender-rigging-humanoid",
+            "blender-animation-actions",
+            "blender-root-motion",
+            "blender-pivot-origins"
+          ],
+          "roles": {
+            "implementation": [
+              "blender-rigging-humanoid",
+              "blender-root-motion",
+              "blender-pivot-origins"
+            ],
+            "polish": [
+              "blender-animation-actions"
+            ]
+          }
+        },
+        "ai-navigation": {
+          "skillIds": [
+            "blender-weight-painting"
+          ],
+          "roles": {
+            "implementation": [
+              "blender-weight-painting"
+            ]
+          }
+        },
+        "input-camera-character": {
+          "skillIds": [
+            "blender-camera-animation"
+          ],
+          "roles": {
+            "polish": [
+              "blender-camera-animation"
+            ]
+          }
+        },
+        "mastery-expansion": {
+          "skillIds": [
+            "blender-mastery-hard-surface-topology",
+            "blender-mastery-character-retopology",
+            "blender-mastery-procedural-geometry-nodes",
+            "blender-mastery-uv-density",
+            "blender-mastery-pbr-baking",
+            "blender-mastery-rigify-production",
+            "blender-mastery-facial-rigging",
+            "blender-mastery-animation-cleanup",
+            "blender-mastery-motion-retargeting",
+            "blender-mastery-lod-generation",
+            "blender-mastery-collision-proxies",
+            "blender-mastery-asset-library",
+            "blender-mastery-batch-export",
+            "blender-mastery-material-optimization",
+            "blender-mastery-lighting-lookdev",
+            "blender-mastery-camera-cinematics",
+            "blender-mastery-sculpt-pipeline",
+            "blender-mastery-texture-painting",
+            "blender-mastery-shape-keys",
+            "blender-mastery-engine-validation"
+          ],
+          "roles": {
+            "design": [
+              "blender-mastery-hard-surface-topology",
+              "blender-mastery-rigify-production",
+              "blender-mastery-collision-proxies",
+              "blender-mastery-camera-cinematics"
+            ],
+            "implementation": [
+              "blender-mastery-character-retopology",
+              "blender-mastery-facial-rigging",
+              "blender-mastery-asset-library",
+              "blender-mastery-sculpt-pipeline"
+            ],
+            "polish": [
+              "blender-mastery-procedural-geometry-nodes",
+              "blender-mastery-animation-cleanup",
+              "blender-mastery-batch-export",
+              "blender-mastery-texture-painting"
+            ],
+            "optimization": [
+              "blender-mastery-uv-density",
+              "blender-mastery-motion-retargeting",
+              "blender-mastery-material-optimization",
+              "blender-mastery-shape-keys"
+            ],
+            "validation": [
+              "blender-mastery-pbr-baking",
+              "blender-mastery-lod-generation",
+              "blender-mastery-lighting-lookdev",
+              "blender-mastery-engine-validation"
+            ]
+          }
+        },
+        "studio-craft": {
+          "skillIds": [
+            "blender-studio-animation-posing",
+            "blender-studio-animation-timing",
+            "blender-studio-graph-editor-polish",
+            "blender-studio-walk-cycles",
+            "blender-studio-combat-choreography",
+            "blender-studio-creature-animation",
+            "blender-studio-facial-animation",
+            "blender-studio-lip-sync",
+            "blender-studio-motion-cleanup",
+            "blender-studio-retargeting",
+            "blender-studio-rig-controls",
+            "blender-studio-weight-painting",
+            "blender-studio-character-sculpt",
+            "blender-studio-character-topology",
+            "blender-studio-hard-surface-modeling",
+            "blender-studio-environment-modeling",
+            "blender-studio-prop-modeling",
+            "blender-studio-uv-craft",
+            "blender-studio-pbr-texturing",
+            "blender-studio-procedural-materials",
+            "blender-studio-geometry-nodes",
+            "blender-studio-hair-grooming",
+            "blender-studio-cloth-simulation",
+            "blender-studio-lighting-craft",
+            "blender-studio-composition",
+            "blender-studio-look-development",
+            "blender-studio-render-polish",
+            "blender-studio-engine-export",
+            "blender-studio-asset-optimization",
+            "blender-studio-portfolio-presentation"
+          ],
+          "roles": {
+            "design": [
+              "blender-studio-animation-posing",
+              "blender-studio-creature-animation",
+              "blender-studio-rig-controls",
+              "blender-studio-environment-modeling",
+              "blender-studio-geometry-nodes",
+              "blender-studio-look-development"
+            ],
+            "implementation": [
+              "blender-studio-animation-timing",
+              "blender-studio-facial-animation",
+              "blender-studio-weight-painting",
+              "blender-studio-prop-modeling",
+              "blender-studio-hair-grooming",
+              "blender-studio-render-polish"
+            ],
+            "polish": [
+              "blender-studio-graph-editor-polish",
+              "blender-studio-lip-sync",
+              "blender-studio-character-sculpt",
+              "blender-studio-uv-craft",
+              "blender-studio-cloth-simulation",
+              "blender-studio-engine-export"
+            ],
+            "optimization": [
+              "blender-studio-walk-cycles",
+              "blender-studio-motion-cleanup",
+              "blender-studio-character-topology",
+              "blender-studio-pbr-texturing",
+              "blender-studio-lighting-craft",
+              "blender-studio-asset-optimization"
+            ],
+            "validation": [
+              "blender-studio-combat-choreography",
+              "blender-studio-retargeting",
+              "blender-studio-hard-surface-modeling",
+              "blender-studio-procedural-materials",
+              "blender-studio-composition",
+              "blender-studio-portfolio-presentation"
+            ]
+          }
+        }
+      }
+    },
+    "figma": {
+      "skillCount": 65,
+      "domains": {
+        "ui-ux": {
+          "skillIds": [
+            "figma-file-architecture",
+            "figma-auto-layout",
+            "figma-components",
+            "figma-variants",
+            "figma-variables",
+            "figma-design-tokens",
+            "figma-responsive-constraints",
+            "figma-prototyping",
+            "figma-accessibility",
+            "figma-game-ui",
+            "figma-shop-ui",
+            "figma-hud",
+            "figma-mobile-ui",
+            "figma-desktop-ui",
+            "figma-developer-handoff"
+          ],
+          "roles": {
+            "design": [
+              "figma-file-architecture",
+              "figma-design-tokens"
+            ],
+            "polish": [
+              "figma-auto-layout",
+              "figma-components",
+              "figma-variants",
+              "figma-variables",
+              "figma-responsive-constraints",
+              "figma-prototyping",
+              "figma-accessibility",
+              "figma-game-ui",
+              "figma-shop-ui",
+              "figma-hud",
+              "figma-mobile-ui",
+              "figma-desktop-ui",
+              "figma-developer-handoff"
+            ]
+          }
+        },
+        "mastery-expansion": {
+          "skillIds": [
+            "figma-mastery-design-tokens",
+            "figma-mastery-auto-layout-systems",
+            "figma-mastery-component-properties",
+            "figma-mastery-responsive-variants",
+            "figma-mastery-prototype-flows",
+            "figma-mastery-accessibility-annotations",
+            "figma-mastery-localization-layouts",
+            "figma-mastery-game-hud-systems",
+            "figma-mastery-inventory-ui",
+            "figma-mastery-shop-ui",
+            "figma-mastery-controller-navigation",
+            "figma-mastery-touch-ergonomics",
+            "figma-mastery-icon-systems",
+            "figma-mastery-motion-specs",
+            "figma-mastery-developer-handoff",
+            "figma-mastery-visual-regression",
+            "figma-mastery-design-qa",
+            "figma-mastery-variable-modes",
+            "figma-mastery-data-driven-components",
+            "figma-mastery-asset-export"
+          ],
+          "roles": {
+            "design": [
+              "figma-mastery-design-tokens",
+              "figma-mastery-accessibility-annotations",
+              "figma-mastery-controller-navigation",
+              "figma-mastery-visual-regression"
+            ],
+            "implementation": [
+              "figma-mastery-auto-layout-systems",
+              "figma-mastery-localization-layouts",
+              "figma-mastery-touch-ergonomics",
+              "figma-mastery-design-qa"
+            ],
+            "polish": [
+              "figma-mastery-component-properties",
+              "figma-mastery-game-hud-systems",
+              "figma-mastery-icon-systems",
+              "figma-mastery-variable-modes"
+            ],
+            "optimization": [
+              "figma-mastery-responsive-variants",
+              "figma-mastery-inventory-ui",
+              "figma-mastery-motion-specs",
+              "figma-mastery-data-driven-components"
+            ],
+            "validation": [
+              "figma-mastery-prototype-flows",
+              "figma-mastery-shop-ui",
+              "figma-mastery-developer-handoff",
+              "figma-mastery-asset-export"
+            ]
+          }
+        },
+        "studio-craft": {
+          "skillIds": [
+            "figma-studio-game-ui-composition",
+            "figma-studio-design-systems",
+            "figma-studio-component-variants",
+            "figma-studio-auto-layout-mastery",
+            "figma-studio-responsive-frames",
+            "figma-studio-controller-navigation-specs",
+            "figma-studio-touch-ergonomics",
+            "figma-studio-accessible-color",
+            "figma-studio-accessible-typography",
+            "figma-studio-ui-motion-specs",
+            "figma-studio-hud-design",
+            "figma-studio-inventory-design",
+            "figma-studio-shop-design",
+            "figma-studio-settings-design",
+            "figma-studio-onboarding-design",
+            "figma-studio-empty-states",
+            "figma-studio-error-states",
+            "figma-studio-loading-states",
+            "figma-studio-localization-resilience",
+            "figma-studio-icon-craft",
+            "figma-studio-illustration-systems",
+            "figma-studio-prototype-flows",
+            "figma-studio-interaction-writing",
+            "figma-studio-information-architecture",
+            "figma-studio-usability-testing",
+            "figma-studio-design-critique",
+            "figma-studio-visual-regression",
+            "figma-studio-developer-handoff",
+            "figma-studio-asset-export",
+            "figma-studio-presentation-craft"
+          ],
+          "roles": {
+            "design": [
+              "figma-studio-game-ui-composition",
+              "figma-studio-controller-navigation-specs",
+              "figma-studio-hud-design",
+              "figma-studio-empty-states",
+              "figma-studio-illustration-systems",
+              "figma-studio-design-critique"
+            ],
+            "implementation": [
+              "figma-studio-design-systems",
+              "figma-studio-touch-ergonomics",
+              "figma-studio-inventory-design",
+              "figma-studio-error-states",
+              "figma-studio-prototype-flows",
+              "figma-studio-visual-regression"
+            ],
+            "polish": [
+              "figma-studio-component-variants",
+              "figma-studio-accessible-color",
+              "figma-studio-shop-design",
+              "figma-studio-loading-states",
+              "figma-studio-interaction-writing",
+              "figma-studio-developer-handoff"
+            ],
+            "optimization": [
+              "figma-studio-auto-layout-mastery",
+              "figma-studio-accessible-typography",
+              "figma-studio-settings-design",
+              "figma-studio-localization-resilience",
+              "figma-studio-information-architecture",
+              "figma-studio-asset-export"
+            ],
+            "validation": [
+              "figma-studio-responsive-frames",
+              "figma-studio-ui-motion-specs",
+              "figma-studio-onboarding-design",
+              "figma-studio-icon-craft",
+              "figma-studio-usability-testing",
+              "figma-studio-presentation-craft"
+            ]
+          }
+        }
+      }
+    },
+    "general": {
+      "skillCount": 100,
+      "domains": {
+        "textures-art": {
+          "skillIds": [
+            "general-creative-direction",
+            "general-anti-generic-design",
+            "general-ui-art-direction",
+            "general-material-language",
+            "general-texture-design",
+            "general-visual-polish",
+            "general-world-art-direction",
+            "general-lighting-mood",
+            "general-scope-smart-defaults",
+            "general-final-polish-loop"
+          ],
+          "roles": {
+            "implementation": [
+              "general-creative-direction",
+              "general-material-language",
+              "general-visual-polish",
+              "general-final-polish-loop"
+            ],
+            "design": [
+              "general-anti-generic-design",
+              "general-texture-design"
+            ],
+            "polish": [
+              "general-ui-art-direction",
+              "general-world-art-direction",
+              "general-lighting-mood",
+              "general-scope-smart-defaults"
+            ]
+          }
+        },
+        "design-production": {
+          "skillIds": [
+            "general-intent-expansion",
+            "general-typography",
+            "general-content-hierarchy",
+            "general-onboarding",
+            "notion-knowledge-cleanup",
+            "notion-content-brief",
+            "notion-study-synthesis",
+            "notion-hybrid-agent-routing"
+          ],
+          "roles": {
+            "implementation": [
+              "general-intent-expansion",
+              "general-typography",
+              "general-content-hierarchy",
+              "notion-knowledge-cleanup",
+              "notion-content-brief",
+              "notion-study-synthesis",
+              "notion-hybrid-agent-routing"
+            ],
+            "design": [
+              "general-onboarding"
+            ]
+          }
+        },
+        "ui-ux": {
+          "skillIds": [
+            "general-ui-shop-design",
+            "general-color-system",
+            "general-juice-feedback",
+            "general-accessibility-pass",
+            "general-responsive-design",
+            "general-quality-scorecard",
+            "notion-spec-to-build",
+            "notion-technical-design",
+            "canvas-svg-ui",
+            "canvas-texture-patterns",
+            "canvas-icons",
+            "canvas-responsive-mockups",
+            "canvas-to-figma-import"
+          ],
+          "roles": {
+            "design": [
+              "general-ui-shop-design",
+              "general-responsive-design",
+              "notion-technical-design"
+            ],
+            "implementation": [
+              "general-color-system",
+              "general-accessibility-pass",
+              "general-quality-scorecard",
+              "canvas-icons",
+              "canvas-responsive-mockups",
+              "canvas-to-figma-import"
+            ],
+            "polish": [
+              "general-juice-feedback",
+              "canvas-svg-ui",
+              "canvas-texture-patterns"
+            ],
+            "validation": [
+              "notion-spec-to-build"
+            ]
+          }
+        },
+        "testing-release": {
+          "skillIds": [
+            "general-layout-composition",
+            "general-component-states",
+            "general-gameplay-loop",
+            "general-progression-rewards",
+            "general-reference-decomposition",
+            "notion-workspace-research",
+            "notion-project-planning",
+            "notion-decision-document",
+            "notion-meeting-followup",
+            "notion-release-notes",
+            "notion-personal-planning",
+            "notion-table-analysis"
+          ],
+          "roles": {
+            "implementation": [
+              "general-layout-composition",
+              "general-component-states",
+              "general-gameplay-loop",
+              "general-progression-rewards",
+              "general-reference-decomposition",
+              "notion-workspace-research",
+              "notion-decision-document",
+              "notion-meeting-followup",
+              "notion-table-analysis"
+            ],
+            "design": [
+              "notion-project-planning",
+              "notion-personal-planning"
+            ],
+            "validation": [
+              "notion-release-notes"
+            ]
+          }
+        },
+        "input-camera-character": {
+          "skillIds": [
+            "general-interaction-design"
+          ],
+          "roles": {
+            "design": [
+              "general-interaction-design"
+            ]
+          }
+        },
+        "animation": {
+          "skillIds": [
+            "general-motion-design",
+            "general-animation-polish"
+          ],
+          "roles": {
+            "design": [
+              "general-motion-design"
+            ],
+            "polish": [
+              "general-animation-polish"
+            ]
+          }
+        },
+        "vfx": {
+          "skillIds": [
+            "general-vfx-readability"
+          ],
+          "roles": {
+            "polish": [
+              "general-vfx-readability"
+            ]
+          }
+        },
+        "audio": {
+          "skillIds": [
+            "general-audio-feedback"
+          ],
+          "roles": {
+            "polish": [
+              "general-audio-feedback"
+            ]
+          }
+        },
+        "ai-navigation": {
+          "skillIds": [
+            "notion-database-design"
+          ],
+          "roles": {
+            "design": [
+              "notion-database-design"
+            ]
+          }
+        },
+        "world-levels": {
+          "skillIds": [
+            "notion-bug-triage"
+          ],
+          "roles": {
+            "implementation": [
+              "notion-bug-triage"
+            ]
+          }
+        },
+        "mastery-expansion": {
+          "skillIds": [
+            "general-mastery-requirements-synthesis",
+            "general-mastery-architecture-decisions",
+            "general-mastery-threat-modeling",
+            "general-mastery-privacy-review",
+            "general-mastery-economy-simulation",
+            "general-mastery-difficulty-tuning",
+            "general-mastery-telemetry-schemas",
+            "general-mastery-liveops-calendars",
+            "general-mastery-community-moderation",
+            "general-mastery-store-submissions",
+            "general-mastery-crash-triage",
+            "general-mastery-performance-baselines",
+            "general-mastery-memory-leak-hunts",
+            "general-mastery-network-simulation",
+            "general-mastery-save-compatibility",
+            "general-mastery-localization-qa",
+            "general-mastery-accessibility-playtests",
+            "general-mastery-release-rollback",
+            "general-mastery-postmortem-practice",
+            "general-mastery-production-estimation"
+          ],
+          "roles": {
+            "design": [
+              "general-mastery-requirements-synthesis",
+              "general-mastery-difficulty-tuning",
+              "general-mastery-crash-triage",
+              "general-mastery-localization-qa"
+            ],
+            "implementation": [
+              "general-mastery-architecture-decisions",
+              "general-mastery-telemetry-schemas",
+              "general-mastery-performance-baselines",
+              "general-mastery-accessibility-playtests"
+            ],
+            "polish": [
+              "general-mastery-threat-modeling",
+              "general-mastery-liveops-calendars",
+              "general-mastery-memory-leak-hunts",
+              "general-mastery-release-rollback"
+            ],
+            "optimization": [
+              "general-mastery-privacy-review",
+              "general-mastery-community-moderation",
+              "general-mastery-network-simulation",
+              "general-mastery-postmortem-practice"
+            ],
+            "validation": [
+              "general-mastery-economy-simulation",
+              "general-mastery-store-submissions",
+              "general-mastery-save-compatibility",
+              "general-mastery-production-estimation"
+            ]
+          }
+        },
+        "studio-craft": {
+          "skillIds": [
+            "general-studio-creative-direction",
+            "general-studio-art-direction",
+            "general-studio-animation-direction",
+            "general-studio-ui-direction",
+            "general-studio-gameplay-direction",
+            "general-studio-audio-direction",
+            "general-studio-vfx-direction",
+            "general-studio-technical-direction",
+            "general-studio-architecture-review",
+            "general-studio-security-review",
+            "general-studio-performance-review",
+            "general-studio-accessibility-review",
+            "general-studio-localization-review",
+            "general-studio-economy-review",
+            "general-studio-liveops-review",
+            "general-studio-player-psychology",
+            "general-studio-game-feel-critique",
+            "general-studio-visual-critique",
+            "general-studio-interaction-critique",
+            "general-studio-content-critique",
+            "general-studio-scope-control",
+            "general-studio-production-planning",
+            "general-studio-risk-management",
+            "general-studio-playtest-research",
+            "general-studio-telemetry-insight",
+            "general-studio-bug-prioritization",
+            "general-studio-polish-passes",
+            "general-studio-integration-review",
+            "general-studio-release-review",
+            "general-studio-postlaunch-iteration"
+          ],
+          "roles": {
+            "design": [
+              "general-studio-creative-direction",
+              "general-studio-audio-direction",
+              "general-studio-performance-review",
+              "general-studio-player-psychology",
+              "general-studio-scope-control",
+              "general-studio-bug-prioritization"
+            ],
+            "implementation": [
+              "general-studio-art-direction",
+              "general-studio-vfx-direction",
+              "general-studio-accessibility-review",
+              "general-studio-game-feel-critique",
+              "general-studio-production-planning",
+              "general-studio-polish-passes"
+            ],
+            "polish": [
+              "general-studio-animation-direction",
+              "general-studio-technical-direction",
+              "general-studio-localization-review",
+              "general-studio-visual-critique",
+              "general-studio-risk-management",
+              "general-studio-integration-review"
+            ],
+            "optimization": [
+              "general-studio-ui-direction",
+              "general-studio-architecture-review",
+              "general-studio-economy-review",
+              "general-studio-interaction-critique",
+              "general-studio-playtest-research",
+              "general-studio-release-review"
+            ],
+            "validation": [
+              "general-studio-gameplay-direction",
+              "general-studio-security-review",
+              "general-studio-liveops-review",
+              "general-studio-content-critique",
+              "general-studio-telemetry-insight",
+              "general-studio-postlaunch-iteration"
+            ]
+          }
+        }
+      }
+    }
+  }
+}
