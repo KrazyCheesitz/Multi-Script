@@ -7,7 +7,7 @@ c=b.MCPClient('unity',sys.executable,[str(ROOT/'tests'/'fake_mcp_server.py')]); 
 try:
  assert any(x['name']=='ping' for x in c.tools_cache)
  b.mgr.clients['unity']=c
- cat=json.loads(b._builtin_call('ms_engine_catalog',{'server':'unity'},b.mgr)['text']); assert cat['nativeToolCount']>=1 and cat['multiScriptDirectToolCount']==151
+ cat=json.loads(b._builtin_call('ms_engine_catalog',{'server':'unity'},b.mgr)['text']); assert cat['nativeToolCount']>=1 and cat['multiScriptDirectToolCount']==210
  routed=b._builtin_call('ms_call_engine_tool',{'server':'unity','tool':'ping','arguments':{}},b.mgr); assert routed['text']=='pong'
  smoke=json.loads(b._builtin_call('ms_engine_connection_test',{'server':'unity','tool':'ping'},b.mgr)['text']); assert smoke['verified'] and smoke['testedTool']=='ping'
  assert c.call_tool('ping',{},3)['text']=='pong'

@@ -1,0 +1,7 @@
+const fs=require("fs");const main=fs.readFileSync("extension/core/main.js","utf8"),config=fs.readFileSync("extension/core/config.js","utf8");
+for(const x of ["sanitizeMenuPrefs","MENU_PREF_ENUMS","sanitizeProviderBehavior","sanitizeProviderBehaviorMap","ms-reset-agent-settings","Current behavior:","effectiveSettings","specialistDepth","usageOptimizer","customInstructionsConfigured","elevenLabsConfigured","customMcpServerCount"])if(!main.includes(x))throw new Error("missing menu hardening "+x);
+for(const x of ["Prompt rewriting","skills always active","Production checks","Creative output","Studio skill coverage","Usage optimizer","Audio generation","Custom instructions","Engines & MCP servers","Troubleshooting","Appearance studio"])if(!main.includes(x))throw new Error("uncovered menu setting "+x);
+if(!main.includes("to use it free, you need a business trial.")||!main.includes("does not bypass subscriptions, Business-trial requirements, plan limits, or Notion’s model picker"))throw new Error("Notion access boundary missing");
+if(!main.includes("Roblox Studio, Unity, Godot, Blender, and other configured MCP tools"))throw new Error("onboarding is still Roblox-only");
+for(const x of ["PRODUCT SCOPE","original ZeroScript foundation","arbitrary configured MCP servers","do not narrow the product to Notion AI","must never bypass subscriptions"])if(!config.includes(x))throw new Error("scope missing "+x);
+console.log("PASS 6.6 all menu settings validated/diagnosed; broad provider+MCP scope; no access-control bypass");

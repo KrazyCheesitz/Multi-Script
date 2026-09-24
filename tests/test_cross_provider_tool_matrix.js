@@ -3,7 +3,11 @@ const root=path.resolve(__dirname,'..');
 const parser=new Function(fs.readFileSync(path.join(root,'extension/core/parser.js'),'utf8')+';return ZSParse;')();
 const bridge=fs.readFileSync(path.join(root,'runtime/bridge.py'),'utf8');
 const tools=[...bridge.matchAll(/\{["']name["']:\s*["'](ms_[^"']+)["']/g)].map(x=>x[1]);
-if(tools.length!==151||new Set(tools).size!==151)throw new Error('expected 151 unique built-in tools, got '+tools.length);
+const robloxLine=bridge.split(/\r?\n/).find(x=>x.startsWith('ROBLOX_STUDIO_V3_CONTRACTS = '))||'';
+tools.push(...[...robloxLine.matchAll(/'(ms_roblox_[^']+)': \{/g)].map(x=>x[1]));
+const engineLine=bridge.split(/\r?\n/).find(x=>x.startsWith('ENGINE_PRO_V3_CONTRACTS = '))||'';
+tools.push(...[...engineLine.matchAll(/'(ms_(?:unity|godot|blender)_[^']+)': \{/g)].map(x=>x[1]));
+if(tools.length!==210||new Set(tools).size!==210)throw new Error('expected 210 unique built-in tools, got '+tools.length);
 const providers=['arena','chatgpt','deepseek','gemini','glm','kimi','meta','notion','qwen'];
 let cases=0;
 for(const provider of providers){

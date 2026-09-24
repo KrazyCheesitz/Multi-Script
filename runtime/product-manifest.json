@@ -1,0 +1,44 @@
+{
+  "product": "Multi-Script",
+  "version": "6.13.0",
+  "catalogue": {
+    "skills": 800,
+    "directTools": 210,
+    "virtualSpecialists": 300,
+    "robloxSkills": 199,
+    "robloxVirtualSpecialists": 90
+  },
+  "providers": 9,
+  "engines": [
+    "roblox",
+    "unity",
+    "godot",
+    "blender",
+    "figma",
+    "general"
+  ],
+  "robloxCompanion": {
+    "version": "6.13.0",
+    "diagnosticOnly": true,
+    "allowedEndpoints": [
+      "GET /status",
+      "GET /catalog",
+      "POST /plugin/heartbeat"
+    ],
+    "forbiddenExecutionSurfaces": [
+      "/plugin/next",
+      "/plugin/result",
+      "msrb_",
+      "roblox-companion-tools.json"
+    ]
+  },
+  "quality": {
+    "criticRoundsMaximum": 3,
+    "liveSchemaRequired": true,
+    "nativeReadBackRequired": true,
+    "promptRewritingIndependent": true
+  },
+  "future": {
+    "vscodeExtension": "deferred; reuse bridge and schemas after stability"
+  }
+}

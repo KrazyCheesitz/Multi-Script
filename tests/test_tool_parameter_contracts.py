@@ -12,10 +12,12 @@ def sample(spec):
     if t=='number':return float(spec.get('minimum',1))
     if t=='boolean':return True
     if t=='array':return [sample(spec.get('items') or {'type':'string'}) for _ in range(max(1,int(spec.get('minItems',1))))]
-    if t=='object':return {}
+    if t=='object':
+        props=spec.get('properties') or {}
+        return {name:sample(props[name]) for name in spec.get('required',[]) if name in props}
     return None
 
-assert len(b.BUILTIN_TOOLS)==151
+assert len(b.BUILTIN_TOOLS)==210
 for tool in b.BUILTIN_TOOLS:
     schema=tool['inputSchema'];props=schema.get('properties',{})
     args={name:sample(props[name]) for name in schema.get('required',[])}
@@ -37,4 +39,4 @@ for bad in ({'count':0,'enabled':True},{'count':2,'enabled':'maybe'},[],{'enable
 standard=json.load(open(ROOT/'runtime'/'studio-standard.json',encoding='utf-8'))
 assert len(standard['principles'])>=6 and len(standard['definitionOfDone'])>=8
 assert set(['roblox','unity','godot','blender','figma','general'])<=set(standard['engines'])
-print('PASS all 151 tool schemas, every declared parameter, provider coercions, bounds, enums and studio standards')
+print('PASS all 210 tool schemas, every declared parameter, provider coercions, bounds, enums and studio standards')
