@@ -207,7 +207,7 @@ html.zs-light #zs-unstable {
 .zs-live-dot.idle { background: #9ca3af; animation: none; box-shadow: none; }
 
 /* primary action button (Start) */
-#zs-action {
+#zs-action, #zs-chat-only {
   flex: none;
   padding: 7px 13px;
   border-radius: 9px; border: 1px solid transparent;
@@ -220,6 +220,10 @@ html.zs-light #zs-unstable {
      arrow, which requests the same thing on browsers without this property. */
   font-variant-emoji: text;
 }
+
+#zs-chat-only { flex:none; padding:7px 11px; border-radius:9px; border:1px solid rgba(129,140,248,.45); background:rgba(99,102,241,.12); color:#c7d2fe; font-size:11.5px; font-weight:700; cursor:pointer; white-space:nowrap; font-variant-emoji:text; }
+#zs-chat-only:hover { background:rgba(99,102,241,.24); }
+#zs-chat-only:disabled { opacity:.45; cursor:not-allowed; }
 #zs-action[data-kind="start"] {
   background: linear-gradient(135deg, #6366f1, #818cf8); color: #fff; border-color: transparent;
   box-shadow: 0 2px 12px rgba(99, 102, 241, 0.45);
@@ -1130,3 +1134,6 @@ html.zs-light .ms-bench-card { border-color:rgba(0,0,0,.09); background:rgba(0,0
 .zs-pref-grid-4{grid-template-columns:repeat(4,1fr)}.zs-color-custom{position:relative;width:24px;height:24px;border-radius:50%;overflow:hidden;cursor:pointer;border:1px dashed rgba(255,255,255,.35)}.zs-color-custom input{position:absolute;inset:-8px;width:42px;height:42px;opacity:0;cursor:pointer}.zs-color-custom span{position:absolute;inset:0;display:grid;place-items:center;color:#ddd;font:700 14px system-ui;pointer-events:none}
 .zs-elevenlabs-sec{border-top:1px solid color-mix(in srgb,var(--ms-accent) 30%,transparent)!important}.zs-secret-state{font:700 8.5px system-ui;text-transform:uppercase;letter-spacing:.4px;padding:3px 7px;border-radius:99px}.zs-secret-state.on{color:#87e7bb;background:rgba(42,169,129,.13);border:1px solid rgba(42,169,129,.35)}.zs-secret-state.off{color:#e8aa72;background:rgba(227,139,60,.1);border:1px solid rgba(227,139,60,.3)}.zs-secret-field{display:grid;grid-template-columns:1fr auto;gap:6px;margin-top:10px}.zs-secret-field input{min-width:0;border:1px solid rgba(255,255,255,.11);background:rgba(0,0,0,.18);color:#eee;border-radius:8px;padding:9px;font:10.5px ui-monospace,monospace}.zs-secret-field input:focus{outline:none;border-color:var(--ms-accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--ms-accent) 18%,transparent)}
 html.zs-light .zs-brand-grid input,html.zs-light .zs-secret-field input{background:white;color:#222;border-color:rgba(0,0,0,.13)}html.zs-light .zs-custom-preview b{color:#20222b}
+
+/* Always-visible Notion recovery surface when the AI composer has not mounted. */
+#zs-bar.zs-bar-detached { position:fixed; z-index:2147483601; margin:0; }

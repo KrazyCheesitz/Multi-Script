@@ -1,0 +1,2865 @@
+{
+  "release": "6.13.0",
+  "generatedFrom": "bundled vendor documentation, runtime schemas, exhaustive local regression suites",
+  "limitations": [
+    "No editor was attached in this sandbox, so engine-mutating smoke tests remain runtime gates on the user machine.",
+    "Third-party MCP schemas may change; Multi-Script refreshes and validates their live advertised schema rather than guaranteeing future upstream behavior."
+  ],
+  "catalogue": {
+    "skills": 800,
+    "directTools": 210,
+    "virtualSpecialists": 300,
+    "skillPacks": 3
+  },
+  "explicitEngineAssignments": {
+    "skills": {
+      "general": 141,
+      "roblox": 199,
+      "unity": 148,
+      "godot": 147,
+      "blender": 100,
+      "figma": 65
+    },
+    "virtualSpecialists": {
+      "roblox": 90,
+      "unity": 70,
+      "godot": 70,
+      "blender": 70
+    },
+    "missing": 0
+  },
+  "schemaAudit": {
+    "schemasAudited": 210,
+    "highRisk": 0,
+    "mediumRisk": 0,
+    "lowRisk": 210,
+    "maximumEstimatedPreCallRisk": 0.065,
+    "method": "deterministic structural heuristic; not observed production failure probability",
+    "tools": [
+      {
+        "tool": "ms_mcp_schema_audit",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_bridge_status",
+        "estimatedPreCallFailureProbability": 0.015,
+        "riskBand": "low",
+        "issues": [],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_list_resources",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_read_resource",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_list_skills",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_recommend_skills",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_get_skill",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_critic_review",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_workflow_plan",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_parallel_tools",
+        "estimatedPreCallFailureProbability": 0.065,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          },
+          {
+            "path": "schema.calls[]",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_enhance_brief",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_quality_scorecard",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_quality_checklist",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_test_matrix",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_create_canvas_texture",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_create_canvas_ui",
+        "estimatedPreCallFailureProbability": 0.065,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          },
+          {
+            "path": "schema.components[]",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_figma_handoff",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_asset_budget",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_release_checklist",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_risk_register",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_engine_handoff",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_prompt_rescue",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_game_blueprint",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_vertical_slice_plan",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_system_design_review",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_gameplay_balance_plan",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_multiplayer_authority_audit",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_save_migration_plan",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_performance_budget_plan",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_accessibility_audit",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_content_pipeline_plan",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_playtest_protocol",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_definition_of_done",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_orchestrate_request",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_activate_skill_stack",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_animation_director",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_texture_art_pipeline",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_art_direction",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_uiux_production",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_vfx_production",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_audio_production",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_list_virtual_tools",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_match_virtual_tools",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_virtual_tool_details",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_run_virtual_tool",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_elevenlabs_status",
+        "estimatedPreCallFailureProbability": 0.015,
+        "riskBand": "low",
+        "issues": [],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_generate_sound_effect",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_list_generated_audio",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_camera_system_design",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_input_mapping_plan",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_character_controller_review",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_combat_system_design",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_ai_behavior_design",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_quest_system_design",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_inventory_economy_design",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_procedural_generation_plan",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_shader_production",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_lighting_production",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_environment_production",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_character_model_production",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_rigging_production",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_localization_audit",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_telemetry_plan",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_liveops_plan",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_store_compliance_check",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_security_abuse_review",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_bug_triage",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_regression_plan",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_dialogue_production",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_cinematic_production",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_tutorial_design",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_navigation_system_design",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_physics_system_audit",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_vehicle_system_design",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_world_streaming_plan",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_level_design_review",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_puzzle_design",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_social_system_design",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_matchmaking_design",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_modding_pipeline",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_build_automation",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_crash_diagnostics",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_memory_leak_audit",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_network_bandwidth_audit",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_mobile_optimization",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_vr_xr_production",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_web_build_optimization",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_console_readiness",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_controller_haptics",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_iconography_production",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_marketing_capture_plan",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_npc_population_system",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_weather_system",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_day_night_system",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_destructible_system",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_replay_system",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_photo_mode",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_capability_audit",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_engine_catalog",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_engine_connection_test",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_call_engine_tool",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_engine_capability_map",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_animation_studio",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_blender_animation_studio",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_unity_animation_studio",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_godot_animation_studio",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_combat_animation_polish",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_locomotion_animation_polish",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_cinematic_animation_polish",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_creature_animation",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_facial_animation",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_animation_retargeting",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_animation_state_machine",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_animation_runtime_qa",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_gui_design_studio",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_gui_studio",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_unity_ui_studio",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_godot_ui_studio",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_ui_motion_design",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_design_system_production",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_responsive_interface_polish",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_controller_navigation_ux",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_accessible_interface_polish",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_usability_polish",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_blender_model_studio",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_stylized_art_production",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_realistic_art_production",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_environment_art_studio",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_character_art_studio",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_prop_art_studio",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_pbr_material_studio",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_texture_detail_polish",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_lighting_art_studio",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_composition_render_polish",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_game_feel_director",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_combat_feel_director",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_movement_feel_director",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_camera_feel_director",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_onboarding_experience_polish",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_economy_experience_polish",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_social_experience_polish",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_progression_experience_polish",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_studio_critic_loop",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_visual_quality_audit",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_ui_quality_audit",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_gameplay_quality_audit",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_performance_quality_audit",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_cross_engine_integration_audit",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_release_quality_bar",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_full_spectrum_skill_mesh",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_cross_discipline_integration_review",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_studio_director",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_list_direct_tools",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_direct_tool_details",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_provider_execution_optimizer",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_context_budget_optimizer",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_tool_selection_optimizer",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_engine_command_planner",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_result_evidence_synthesizer",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_failure_recovery_director",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_performance_budget_designer",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_frame_time_optimization",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_memory_budget_optimizer",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_asset_budget_optimizer",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_network_efficiency_optimizer",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_loading_startup_optimizer",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_streaming_strategy_optimizer",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_test_coverage_designer",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_edge_case_generator",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_cross_platform_validation",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_accessibility_validation",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_content_scalability_plan",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_technical_debt_reducer",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_production_readiness_director",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_unity_dots_ecs_architecture",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_unity_addressables_delivery",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_unity_render_pipeline_profiler",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_unity_netcode_authority",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_godot_scene_signal_architecture",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_godot_resource_save_pipeline",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_godot_rendering_profiler",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_godot_multiplayer_authority",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_blender_topology_modifier_pipeline",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_blender_geometry_nodes_pipeline",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_blender_rig_animation_pipeline",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_blender_render_color_pipeline",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_datamodel_architecture",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_remote_contract_security",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_streaming_world_optimizer",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_parallel_luau_planner",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_actor_partition_audit",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_datastore_resilience",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_memory_store_coordination",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_messaging_service_reliability",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_character_pipeline",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_animation_runtime_pipeline",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_ui_responsiveness_audit",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_mobile_input_polish",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_console_input_polish",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_vr_comfort_review",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_physics_network_ownership",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_pathfinding_npc_scale",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_microprofiler_optimization",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_render_budget_audit",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_asset_delivery_pipeline",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_liveops_rollout",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_monetization_integrity",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_localization_pipeline",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_accessibility_playtest",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      },
+      {
+        "tool": "ms_roblox_multi_client_test_director",
+        "estimatedPreCallFailureProbability": 0.04,
+        "riskBand": "low",
+        "issues": [
+          {
+            "path": "schema",
+            "severity": "low",
+            "code": "unknown-parameters-allowed"
+          }
+        ],
+        "basis": "deterministic schema-shape heuristic; not an observed production failure rate"
+      }
+    ]
+  },
+  "parameterCoverage": [
+    "required fields",
+    "nested objects",
+    "nested arrays",
+    "strict integers",
+    "finite numbers",
+    "booleans",
+    "enum case normalization",
+    "const",
+    "defaults",
+    "nullable type unions",
+    "minimum/maximum",
+    "exclusive bounds",
+    "string length",
+    "regex patterns",
+    "array length",
+    "unique items",
+    "object property counts",
+    "additionalProperties",
+    "oneOf",
+    "anyOf",
+    "allOf",
+    "local $ref/$defs"
+  ],
+  "engineBinding": {
+    "namedDirectPrefixes": {
+      "ms_roblox_": "roblox",
+      "ms_unity_": "unity",
+      "ms_godot_": "godot",
+      "ms_blender_": "blender"
+    },
+    "liveNativeSchemaLookupBeforeEveryCall": true,
+    "schemaRefreshAfterRestart": true,
+    "collisionSafeServerNamespacing": true,
+    "singleTransientRetry": true,
+    "nativeReadBackRequired": true
+  },
+  "bundledResearch": {
+    "unity": {
+      "version": "10.2.0",
+      "documentedToolSections": 29,
+      "source": "vendor CoplayDev tools/resources/workflows/ProBuilder references"
+    },
+    "godot": {
+      "version": "0.1.1",
+      "documentedCoreTools": [],
+      "source": "vendor Coding-Solo README/package metadata"
+    }
+  },
+  "tests": {
+    "pythonSuites": 27,
+    "javascriptSuites": 21,
+    "releaseGatePassed": true,
+    "parameterSchemasExercised": 210,
+    "skillsRetrievedQueriedRecommended": 800,
+    "virtualSpecialistsExecuted": 300
+  },
+  "knownCriticalOrHighMismatches": [],
+  "residualRisk": "Low for built-in schema normalization under tested inputs; environment/editor/plugin/upstream-version failures remain detectable runtime risks rather than preventable compile-time guarantees.",
+  "keylessAudio": {
+    "provider": "Multi-Script Local Audio",
+    "apiKeyRequired": false,
+    "networkRequired": false,
+    "deterministicSeed": true,
+    "output": "wav_44100_pcm16",
+    "optionalCloud": "ElevenLabs"
+  },
+  "arenaDirectMax": {
+    "separateFromNotion": true,
+    "defaultProfile": "directmax",
+    "routing": "prompt-only per turn",
+    "capabilitySignals": 8,
+    "automaticPicker": false,
+    "accessBypass": false,
+    "modelGuarantee": false
+  },
+  "arenaRouting": {
+    "defaultProfile": "opus55",
+    "modelTargetedProfiles": [
+      "opus55",
+      "opus5",
+      "gpt56",
+      "kimi3",
+      "luna"
+    ],
+    "untargetedOptional": "directmax",
+    "perTurnRequest": true,
+    "pickerAutomation": false
+  },
+  "productIntegrity": {
+    "canonicalManifest": true,
+    "criticRounds": 3,
+    "robloxPluginDiagnosticVersion": 2,
+    "heartbeatSanitized": true,
+    "vscodeExtension": "deferred"
+  }
+}

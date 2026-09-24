@@ -1,4 +1,4 @@
-# Install Multi-Script 5.3.1
+# Install Multi-Script 6.8.0
 
 ## Requirements
 - Windows 10/11 or macOS/Linux
@@ -23,7 +23,7 @@ Keep the terminal open. The bridge binds only to `127.0.0.1:17613`.
 4. Select the extracted `Multi-Script/extension` folder.
 5. Pin Multi-Script to the toolbar.
 
-For store submission, upload `Multi-Script-Extension-5.3.1.zip`; users installing the store build still need the local bridge package.
+For store submission, upload `Multi-Script-Extension-6.8.0.zip`; users installing the store build still need the local bridge package.
 
 ## 4. Connect an editor
 Open Roblox Studio, Unity, or Godot with its MCP integration enabled. Multi-Script's Engines tab distinguishes a running server from an attached editor.
@@ -34,7 +34,15 @@ Open a supported AI site, open Multi-Script, and confirm the bridge is online. O
 ## Updating
 Stop the bridge, replace the extracted folder, reload the extension, then restart the bridge. Keep a backup of `runtime/config.json` if you added custom servers.
 
-## Optional ElevenLabs audio setup
+## Keyless local audio and optional ElevenLabs setup
+
+Local procedural sound generation works immediately with no account, network call, quota, or API key. It is the default for UI sounds, impacts, stylized effects, ambience, loops, and rapid iteration.
+
+Optional cloud setup for more complex natural material:
+
+Local procedural sound generation works immediately with no account, network call, quota, or API key. It is the default for UI sounds, impacts, stylized effects, ambience, loops, and rapid iteration.
+
+Optional cloud setup for more complex natural material:
 
 1. Create an ElevenLabs API key.
 2. Run `python runtime/configure_elevenlabs.py`.

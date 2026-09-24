@@ -1,10 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Multi-Script \u00b7 Multi-Engine AI Studio",
-  "version": "5.3.1",
+  "version": "6.13.0",
   "description": "Customizable multi-provider AI workflows for Roblox, Unity, Godot, Blender, Figma, and MCP tools.",
   "permissions": [
-    "storage"
+    "storage",
+    "activeTab",
+    "scripting"
   ],
   "host_permissions": [
     "https://chat.deepseek.com/*",
@@ -24,7 +26,9 @@
     "https://notion.ai/*",
     "https://www.notion.ai/*",
     "https://notion.so/*",
-    "https://www.notion.so/*"
+    "https://www.notion.so/*",
+    "https://notion.com/*",
+    "https://www.notion.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -203,7 +207,9 @@
         "https://notion.ai/*",
         "https://www.notion.ai/*",
         "https://notion.so/*",
-        "https://www.notion.so/*"
+        "https://www.notion.so/*",
+        "https://notion.com/*",
+        "https://www.notion.com/*"
       ],
       "js": [
         "core/config.js",
@@ -219,5 +225,5 @@
     }
   ],
   "short_name": "Multi-Script",
-  "version_name": "5.3.1 Notion Trial Guidance"
+  "version_name": "6.13.0 Product Critic and Roblox Diagnostics"
 }

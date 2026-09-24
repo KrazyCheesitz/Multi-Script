@@ -1,4 +1,4 @@
-# Multi-Script browser extension 5.3.1
+# Multi-Script browser extension 6.13.0
 
 This folder is the browser half of Multi-Script. It adds the control center to supported AI chat sites and communicates with the local loopback bridge.
 
@@ -12,7 +12,7 @@ This folder is the browser half of Multi-Script. It adds the control center to s
 See [`../docs/INSTALL.md`](../docs/INSTALL.md) for the full editor/MCP setup.
 
 ## Store package
-`Multi-Script-Extension-5.3.1.zip` is packaged with `manifest.json` at the archive root for Chrome/Edge store upload. The extension still requires the separately installed local bridge.
+`Multi-Script-Extension-6.13.0.zip` is packaged with `manifest.json` at the archive root for Chrome/Edge store upload. The extension still requires the separately installed local bridge.
 
 ## Privacy and safety
 The extension stores preferences locally and connects to `127.0.0.1`. Read [`../docs/PRIVACY.md`](../docs/PRIVACY.md) and [`../docs/SECURITY.md`](../docs/SECURITY.md) before publishing.

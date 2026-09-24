@@ -61,6 +61,12 @@ const ZSProvider = (() => {
   "use strict";
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   let diag = () => {}; // injected by core via init()
+  function deepQueryAll(selector, root = document) {
+    const out = []; const seen = new Set();
+    const walk = (node) => { if (!node || seen.has(node)) return; seen.add(node); try { out.push(...node.querySelectorAll(selector)); node.querySelectorAll("*").forEach((el) => { if (el.shadowRoot) walk(el.shadowRoot); }); } catch {} };
+    walk(root); return out;
+  }
+  const deepQuery = (selector) => deepQueryAll(selector)[0] || null;
 
   const S = {
     msg: "[data-message-author-role]",
@@ -221,7 +227,7 @@ const ZSProvider = (() => {
   const assistantItems = () => allItems().filter(isAssistantItem);
   const assistantCount = () => assistantItems().length;
   const userCount = () => allItems().filter(isUserItem).length;
-  const getEditor = () => document.querySelector(S.editor);
+  const getEditor = () => deepQuery(S.editor + ", [contenteditable=true][data-testid*=composer], [contenteditable=true][aria-label*=message i]");
   const editorText = () => {
     const e = getEditor();
     return e ? e.textContent || "" : "";
@@ -345,7 +351,7 @@ const ZSProvider = (() => {
   // raised "ChatGPT did not accept the injected message after 4 attempts".
   const isStopBtn = (b) => !!b && b.getAttribute("data-testid") === "stop-button";
   const submitButton = () => {
-    const b = document.querySelector(S.submitBtn);
+    const b = deepQuery(S.submitBtn + ", button[aria-label*=send i], button[aria-label*=stop i]");
     return b && b.offsetParent !== null ? b : null;
   };
   const sendButton = () => {
@@ -911,6 +917,7 @@ const ZSProvider = (() => {
   return {
     id: "chatgpt",
     displayName: "ChatGPT",
+    providerHardening: "shadow-dom+semantic-controls+virtualized-turns",
     timings,
     // Exported for test-chatgpt.js (the Node smoke test drives it against a stub
     // DOM). The core reads replies through itemText/classifyText, not this.

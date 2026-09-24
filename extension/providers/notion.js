@@ -15,7 +15,24 @@ const ZSProvider = (() => {
     REASON_NOREPLY_MS: 90000, STABLE_MS: 9000, RESPONSE_TIMEOUT_MS: 300000,
   };
 
-  const visible = (el) => !!(el && el.isConnected && el.getClientRects().length);
+  const visible = (el) => {
+    if (!el || !el.isConnected) return false;
+    const cs = getComputedStyle(el);
+    if (cs.display === "none" || cs.visibility === "hidden" || cs.opacity === "0") return false;
+    const r = el.getBoundingClientRect();
+    return !!(el.getClientRects().length || r.width || r.height);
+  };
+  function queryAllDeep(selector, root=document) {
+    const out = [], seen = new Set(), roots = [root];
+    while (roots.length) {
+      const cur = roots.shift(); if (!cur || seen.has(cur)) continue; seen.add(cur);
+      try {
+        for (const el of cur.querySelectorAll(selector)) out.push(el);
+        for (const el of cur.querySelectorAll("*")) if (el.shadowRoot) roots.push(el.shadowRoot);
+      } catch {}
+    }
+    return [...new Set(out)];
+  }
   let editorCache = null;
   function editorCandidates() {
     const selectors = [
@@ -23,14 +40,15 @@ const ZSProvider = (() => {
       "[contenteditable='true'][data-placeholder*='Ask' i]", "[contenteditable='true'][data-placeholder*='message' i]",
       "[contenteditable='true'][data-placeholder*='Do anything' i]", "[contenteditable='true'][aria-placeholder*='Do anything' i]",
       "[contenteditable='true'][aria-label*='Ask' i]", "[contenteditable='true'][aria-label*='message' i]",
-      "[contenteditable='true'][aria-label*='Do anything' i]", "[contenteditable='true'][role='textbox']",
-      "[role='textbox'][data-content-editable-root='true']", "[contenteditable='true'][data-slate-editor='true']", "textarea",
+      "[contenteditable='true'][aria-label*='Do anything' i]", "[contenteditable][role='textbox']",
+      "[role='textbox'][data-content-editable-root='true']", "[contenteditable][data-slate-editor='true']",
+      "[contenteditable]:not([contenteditable='false'])", "[role='textbox']", ".ProseMirror", "textarea",
     ];
-    const found = new Set(document.querySelectorAll(selectors.join(",")));
+    const found = new Set(queryAllDeep(selectors.join(",")));
     // The current notion.ai home composer paints “Do anything with AI…” in a
     // sibling/overlay instead of an attribute on the editable node. Walk from
     // that visible label back to its local editable control.
-    for (const hint of document.querySelectorAll("div,span,p")) {
+    for (const hint of queryAllDeep("div,span,p")) {
       const text = (hint.textContent || "").trim();
       if (!/^do anything with ai[….]*$/i.test(text)) continue;
       let cur = hint;
@@ -72,20 +90,33 @@ const ZSProvider = (() => {
   const turnSelector = [
     "[data-message-author-role]", "[data-role='user']", "[data-role='assistant']",
     "[data-testid*='chat-message' i]", "[data-testid*='agent-message' i]", "[data-testid*='user-message' i]", "[data-testid*='message' i]",
-    "[data-message-id]", "article[data-role]", "[class*='chatMessage']", "[class*='agentMessage']", "[class*='message-row']",
+    "[data-message-id]", "[data-author]", "[data-testid*='turn' i]", "[data-testid*='response' i]", "[data-testid*='prompt' i]", "article[data-role]", "[class*='chatMessage']", "[class*='agentMessage']", "[class*='message-row']",
   ].join(",");
   function roleOf(el) {
     if (!el) return "";
     const raw = [el.getAttribute("data-message-author-role"), el.getAttribute("data-role"),
-      el.getAttribute("data-testid"), el.getAttribute("aria-label"), el.className]
+      el.getAttribute("data-testid"), el.getAttribute("data-author"), el.getAttribute("aria-label"), el.className]
       .filter(Boolean).join(" ").toLowerCase();
-    if (/assistant|notion-ai|ai-response|agent-message|bot/.test(raw)) return "assistant";
+    if (el.dataset && el.dataset.zsRoleFallback) return el.dataset.zsRoleFallback;
+    if (/assistant|notion-ai|ai-response|agent-message|response|bot/.test(raw)) return "assistant";
     if (/\buser\b|human|prompt/.test(raw)) return "user";
     return "";
   }
   function allItems() {
     const root = chatRoot();
-    const raw = [...root.querySelectorAll(turnSelector)].filter(visible);
+    let raw = [...root.querySelectorAll(turnSelector)].filter(visible);
+    // notion.ai sometimes removes role metadata from streamed responses. Recover
+    // command-bearing response blocks so their JSON reaches the shared parser.
+    if (!raw.some((x) => roleOf(x) === "assistant")) {
+      for (const code of root.querySelectorAll("pre,code")) {
+        if (!visible(code) || code.closest("form,[data-testid*='composer' i],[contenteditable='true']")) continue;
+        if (!/"(?:command|tool)"\s*:\s*"|###\s*lua|###mcp_tool###/i.test(code.textContent || "")) continue;
+        let item = code;
+        for (let depth = 0; item.parentElement && depth < 4; depth += 1) item = item.parentElement;
+        item.dataset.zsRoleFallback = "assistant"; raw.push(item);
+      }
+    }
+    raw = [...new Set(raw)];
     // Remove nested matches; each turn must be represented once.
     return raw.filter((x) => !raw.some((y) => y !== x && y.contains(x) && roleOf(y) === roleOf(x)));
   }
@@ -235,8 +266,17 @@ const ZSProvider = (() => {
     else if (notionHadTurns) { notionChatEpoch += 1; notionHadTurns = false; }
     return `${location.pathname}${location.search}${location.hash}|${notionPageToken}|${notionChatEpoch}`;
   }
+  async function openAIChat() {
+    const controls = queryAllDeep("button,a,[role='button'],[role='link']").filter(visible);
+    const b = controls.find((x) => /notion ai|ask ai|open ai|chat with ai/i.test(`${x.getAttribute("aria-label") || ""} ${x.getAttribute("title") || ""} ${x.textContent || ""}`));
+    if (!b) return false;
+    b.click();
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) { if (getEditor()) return true; await sleep(100); }
+    return !!getEditor();
+  }
   async function openNewChat() {
-    const b = [...document.querySelectorAll("button,a")].filter(visible).find((x) =>
+    const b = queryAllDeep("button,a").filter(visible).find((x) =>
       /new chat|new conversation|start over/i.test(`${x.getAttribute("aria-label") || ""} ${x.textContent || ""}`));
     if (!b) return false; b.click(); await sleep(500); return true;
   }
@@ -295,10 +335,11 @@ const ZSProvider = (() => {
     return spot;
   }
   const AUTO_ROUTING_PROFILES = {
-    opus55: { label: "Claude Opus 5.5", description: "Future-ready Auto starter request for the real Opus 5.5 when Notion adds it; honest fallback until then.", model: "Claude Opus 5.5", availability: "awaiting-notion" },
-    opus: { label: "Claude Opus 5", description: "Starts each new chat with a focused request for the real Claude Opus 5 through Notion Auto.", model: "Claude Opus 5" },
-    kimi: { label: "Kimi K3", description: "Starts each new chat with a focused request for the real Kimi K3 through Notion Auto.", model: "Kimi K3" },
-    gpt: { label: "GPT-5.6 Sol", description: "Starts each new chat with a focused request for the real GPT-5.6 Sol through Notion Auto.", model: "GPT-5.6 Sol" },
+    opus55: { label: "Claude Opus 5.5", model: "Claude Opus 5.5", availability: "awaiting-notion", description: "Future-ready request for the real Claude Opus 5.5 through Notion Auto, with honest fallback." },
+    opus: { label: "Claude Opus 5", model: "Claude Opus 5", availability: "supported", description: "Requests the real Claude Opus 5 through Notion Auto for each new chat." },
+    gpt: { label: "GPT-5.6 Sol", model: "GPT-5.6 Sol", availability: "supported", description: "Requests the real GPT-5.6 Sol through Notion Auto for each new chat." },
+    kimi: { label: "Kimi K3", model: "Kimi K3", availability: "supported", description: "Requests the real Kimi K3 through Notion Auto for each new chat." },
+    luna: { label: "GPT-6 Luna", model: "GPT-6 Luna", availability: "awaiting-notion", description: "Future-ready request for the real GPT-6 Luna through Notion Auto, with honest fallback." },
   };
   function getAutoRoutingProfile() { return storageGet("zs.notion.autoRoutingProfile") || ""; }
   function setAutoRoutingProfile(id) {
@@ -312,9 +353,19 @@ const ZSProvider = (() => {
   function getStartupProfilePrompt() {
     const x = AUTO_ROUTING_PROFILES[getAutoRoutingProfile()];
     if (!x) return "";
-    return `[NOTION AUTO ROUTING — BEFORE TASK]
+    return `[NOTION AUTO MODEL REQUEST — PROCESS BEFORE THE NEXT BLOCK]
 Preferred model: ${x.model}
-Before processing the instructions that follow, route this new chat to the real ${x.model} model if available and eligible. Keep that real model for the entire chat. This is routing metadata, not a user task. If unavailable, use Notion Auto's best eligible model. Do not emulate or role-play ${x.model}, and never claim it was selected unless Notion itself confirms that selection.`;
+
+ROUTING
+- Route this new chat to the exact real ${x.model} backend model if this workspace, plan and chat are eligible.
+- Keep that same real model for the full conversation and for all instructions that follow.
+- If it is unavailable, continue with Notion Auto's best eligible real model; never imitate ${x.model} through role-play.
+
+
+HANDOFF
+- This block is routing and execution metadata, not the user's task. Do not answer or acknowledge it separately.
+- Apply the complete Multi-Script operating block immediately after this one.
+- Never claim ${x.model} was selected unless Notion itself exposes or confirms that selection.`;
   }
   function autoRoutingProfiles() {
     return Object.entries(AUTO_ROUTING_PROFILES).map(([id, x]) => ({ id, label: x.label, description: x.description, model: x.model, availability: x.availability || "supported" }));
@@ -332,11 +383,12 @@ Before processing the instructions that follow, route this new chat to the real 
 
   return {
     id: "notion", displayName: "Notion AI", timings, supportsVision: false, sendCharBudget: 90000,
+    persistentBarWhenNoEditor: true, noEditorMessage: "Notion AI chat is not open yet.",
     reliableCounts: false, chipAtItemLevel: true, coverMaxH: 280,
     init({ diag: d } = {}) {
       if (d) diag = d;
       try {
-        document.documentElement.dataset.zsNotionVer = "5.3.1";
+        document.documentElement.dataset.zsNotionVer = "6.13.0";
         new MutationObserver(() => { if (editorCache && !editorCache.isConnected) editorCache = null; }).observe(document.documentElement, { childList: true, subtree: true });
       } catch {}
     },
@@ -345,7 +397,7 @@ Before processing the instructions that follow, route this new chat to the real 
     getEditor, editorText, chatIsEmpty, isFreshChat, composerFrame, coverTarget, barMount,
     setInputLock, typeAndSend, stopGeneration, isGenerating, isBusyNow, isHardGenerating,
     enforceComposer, ensureComposerReady, turnHalted, findContinueBtn, clickContinueBtn,
-    scanError, isTooLongMsg, isBusyMsg, openNewChat, conversationKey, installSendHooks,
+    scanError, isTooLongMsg, isBusyMsg, openAIChat, openNewChat, conversationKey, installSendHooks,
     findToolBlockSpot, getStartupProfilePrompt, getAutoRoutingProfile,
     setAutoRoutingProfile, autoRoutingProfiles, routingProfileDiagnostics, selfTest, promptExtra: PROMPT_EXTRA,
   };

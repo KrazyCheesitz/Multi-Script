@@ -2,7 +2,7 @@
 """Build deterministic full and Chrome/Edge extension release archives."""
 from pathlib import Path
 import hashlib,json,subprocess,sys,zipfile
-ROOT=Path(__file__).resolve().parents[1]; VERSION='5.3.1'; OUT=ROOT/'release'; OUT.mkdir(exist_ok=True)
+ROOT=Path(__file__).resolve().parents[1]; VERSION='6.13.0'; OUT=ROOT/'release'; OUT.mkdir(exist_ok=True)
 r=subprocess.run([sys.executable,str(ROOT/'tools/release_check.py')]);
 if r.returncode: raise SystemExit(r.returncode)
 for old in OUT.glob('*'): old.unlink() if old.is_file() else None

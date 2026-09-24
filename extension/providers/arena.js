@@ -29,6 +29,12 @@ const ZSProvider = (() => {
   "use strict";
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   let diag = () => {}; // injected by core via init()
+  function deepQueryAll(selector, root = document) {
+    const out = []; const seen = new Set();
+    const walk = (node) => { if (!node || seen.has(node)) return; seen.add(node); try { out.push(...node.querySelectorAll(selector)); node.querySelectorAll("*").forEach((el) => { if (el.shadowRoot) walk(el.shadowRoot); }); } catch {} };
+    walk(root); return out;
+  }
+  const deepQuery = (selector) => deepQueryAll(selector)[0] || null;
   // Identity of the last image set we STAGED into the composer. The core reuses
   // the same array reference across submitAndGetBase's up-to-4 typeAndSend
   // retries, so keying on it makes the attach idempotent (see typeAndSend) - a
@@ -81,6 +87,49 @@ const ZSProvider = (() => {
     STABLE_MS: 9000,
     RESPONSE_TIMEOUT_MS: 300000,
   };
+
+  // Prompt-only Arena Max/Auto starter profiles. These request a real model from
+  // Arena's router; they never click a model picker, falsify identity, or bypass
+  // account/tier availability. Opus 5.5 is the safe default for each new chat.
+  const AUTO_ROUTING_PROFILES = {
+    opus55:{label:"Claude Opus 5.5 · Direct Max",requestedModel:"Claude Opus 5.5",availability:"arena-dependent",description:"Default. Request the real Claude Opus 5.5 on every turn while providing Direct Max the current capability mix."},
+    opus5:{label:"Claude Opus 5 · Direct Max",requestedModel:"Claude Opus 5",availability:"arena-dependent",description:"Request the real Claude Opus 5 on every turn with honest fallback."},
+    gpt56:{label:"GPT-5.6 Sol · Direct Max",requestedModel:"GPT-5.6 Sol",availability:"arena-dependent",description:"Request the real GPT-5.6 Sol on every turn when Arena exposes it."},
+    kimi3:{label:"Kimi K3 · Direct Max",requestedModel:"Kimi K3",availability:"arena-dependent",description:"Request the real Kimi K3 on every turn when Arena exposes it."},
+    luna:{label:"GPT-6 Luna · Direct Max",requestedModel:"GPT-6 Luna",availability:"future",description:"Future-ready exact-model request with honest fallback."},
+    directmax:{label:"Direct Max · Untargeted Auto",requestedModel:"Arena Direct Max adaptive routing",availability:"arena-dependent",description:"Optional untargeted mode. Let Direct Max select the strongest legitimately available model for each turn."},
+  };
+  const ARENA_PROFILE_KEY="zs.arena.autoRoutingProfile";
+  const ARENA_CAPABILITIES=["native-tool-execution","coding-architecture","quantitative-reasoning","visual-spatial","research-currentness","creative-production","long-context-integration","verification-critique"];
+  function getAutoRoutingProfile(){try{const x=localStorage.getItem(ARENA_PROFILE_KEY);return x===""?"":(AUTO_ROUTING_PROFILES[x]?x:"opus55");}catch{return "opus55";}}
+  function setAutoRoutingProfile(id){const safe=AUTO_ROUTING_PROFILES[id]?id:(id===""?"":"opus55");try{localStorage.setItem(ARENA_PROFILE_KEY,safe);}catch{}return safe;}
+  function autoRoutingProfiles(){return Object.entries(AUTO_ROUTING_PROFILES).map(([id,x])=>({id,...x}));}
+  function getStartupProfilePrompt(){
+    const id=getAutoRoutingProfile(),p=AUTO_ROUTING_PROFILES[id];if(!p)return "";
+    if(id==="directmax") return `[ARENA DIRECT MAX ADAPTIVE STARTER PROFILE — PROMPT-ONLY]\nUse Arena Direct Max's legitimate router independently for every turn. Re-evaluate the current prompt for coding, math, research, vision, creative production, native tool execution, long-context integration, and verification. Preserve exact MCP schemas/results and project state. Never automate a model picker or bypass plans, quotas, verification, availability, or access controls.`;
+    return `[ARENA DIRECT MAX MODEL-TARGETED STARTER PROFILE — PROMPT-ONLY]\nPreferred exact backend: ${p.requestedModel}. For each turn, use Direct Max's legitimate routing analysis together with that turn's genuine capability mix to request the real ${p.requestedModel}. Re-apply this exact-model request independently on the next turn. If unavailable for this account, region, tier, or moment, use the best legitimately available fallback without claiming to be ${p.requestedModel}. Never impersonate a model, automate the picker, or bypass access, plans, quotas, or verification.`;
+  }
+  function _arenaCapabilities(text){
+    const x=String(text||"").toLowerCase(),out=[];const add=(name,re)=>{if(re.test(x))out.push(name);};
+    add("native-tool-execution",/mcp|tool|command|schema|engine|studio|unity|godot|blender|roblox/);
+    add("coding-architecture",/code|script|program|debug|api|network|database|shader|algorithm|architecture/);
+    add("quantitative-reasoning",/math|equation|calculate|probability|physics|balance|budget|optimi[sz]|profile/);
+    add("visual-spatial",/image|vision|model|mesh|texture|material|animation|rig|ui|gui|vfx|lighting|scene/);
+    add("research-currentness",/research|search|latest|current|documentation|compare|source|verify/);
+    add("creative-production",/create|design|build|make|style|story|audio|sound|music|level|game/);
+    add("long-context-integration",/project|existing|continue|integrat|migration|cross.engine|full|complete/);
+    add("verification-critique",/test|verify|validate|evidence|review|audit|bug|regression|quality/);
+    return out.length?out:["general-reasoning"];
+  }
+  function prepareOutboundPrompt(text){
+    text=String(text??"");const id=getAutoRoutingProfile(),p=AUTO_ROUTING_PROFILES[id];
+    if(!p||!text.trim()||text.includes("[ARENA DIRECT MAX MODEL-TARGETED TURN SIGNAL — PROMPT-ONLY]")||text.includes("[ARENA DIRECT MAX TURN SIGNAL — PROMPT-ONLY]"))return text;
+    const capabilities=_arenaCapabilities(text);
+    if(id==="directmax")return `[ARENA DIRECT MAX TURN SIGNAL — PROMPT-ONLY]\nCurrent capability mix: ${capabilities.join(", ")}. Independently route this turn to Arena's strongest legitimately available model. Preserve exact tool schemas/results and continuity. No picker automation or access bypass.\n\n${text}`;
+    return `[ARENA DIRECT MAX MODEL-TARGETED TURN SIGNAL — PROMPT-ONLY]\nPreferred exact backend for THIS turn: ${p.requestedModel}. Genuine capability mix: ${capabilities.join(", ")}. Ask Direct Max to route this turn to the real ${p.requestedModel} when legitimately available and eligible. If unavailable, use an honest fallback without claiming that identity. Re-evaluate and re-apply the exact-model request next turn. No picker automation, quota/plan/verification bypass, or model impersonation.\n\n${text}`;
+  }
+  function routingProfileDiagnostics(){const id=getAutoRoutingProfile(),p=AUTO_ROUTING_PROFILES[id],targeted=!!p&&id!=="directmax";return p?{provider:"arena",profile:id,requestedModel:p.requestedModel,promptReady:true,routing:"prompt-only",modelTargeted:targeted,modelPinned:false,perTurnRouting:true,dynamicCapabilities:ARENA_CAPABILITIES.slice(),automaticPicker:false,accessBypass:false}:{provider:"arena",profile:"",promptReady:false,routing:"standard",modelTargeted:false,modelPinned:false,perTurnRouting:false,dynamicCapabilities:[],automaticPicker:false,accessBypass:false};}
+
 
   // ── Turn classification ───────────────────────────────────────────────────
   // A turn = a direct child of the message <ol> that carries `mx-auto` and a
@@ -229,7 +278,7 @@ const ZSProvider = (() => {
   // textarea (#zs-root) so the send hooks' "not on a chat page" guard holds on
   // login/OAuth pages that have no site composer.
   const getEditor = () => {
-    for (const e of document.querySelectorAll("form textarea")) {
+    for (const e of deepQueryAll("form textarea, textarea[data-testid*=composer], textarea[aria-label*=message i]")) {
       if (!e.closest("#zs-root")) return e;
     }
     return null;
@@ -310,7 +359,7 @@ const ZSProvider = (() => {
 
   // ── Action button (send / stop) ───────────────────────────────────────────
   const ariaOf = (b) => b.getAttribute("aria-label") || "";
-  const allButtons = () => [...document.querySelectorAll("button")];
+  const allButtons = () => deepQueryAll("button");
   const sendButton = () =>
     allButtons().find((b) => S.sendAria.test(ariaOf(b)) && b.offsetParent !== null) || null;
   const stopButton = () =>
@@ -868,6 +917,7 @@ const ZSProvider = (() => {
   return {
     id: "arena",
     displayName: "Arena",
+    providerHardening: "shadow-dom+semantic-controls+verification-safe",
     // Arena's chat composer accepts image uploads (hidden `input[type=file]` in
     // the form → staged preview card → uploaded on send; see attachImages). The
     // underlying model varies per selection, but the vision-capable ones DO read
@@ -910,6 +960,7 @@ const ZSProvider = (() => {
     scanError, isTooLongMsg, isBusyMsg,
     // actions
     attachImages, clearAttachments, conversationKey,
+    getStartupProfilePrompt, getAutoRoutingProfile, setAutoRoutingProfile, autoRoutingProfiles, routingProfileDiagnostics, prepareOutboundPrompt,
     installSendHooks, findToolBlockSpot,
   };
 })();

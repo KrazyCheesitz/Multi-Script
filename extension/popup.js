@@ -4,7 +4,7 @@ const SUPPORTED_HOSTS = [
   "chat.deepseek.com", "deepseek.com", "chatgpt.com", "chat.openai.com",
   "gemini.google.com", "www.kimi.ai", "kimi.ai",
   "chat.z.ai", "chat.qwen.ai", "arena.ai", "www.meta.ai", "meta.ai",
-  "notion.ai", "www.notion.ai", "notion.so", "www.notion.so",
+  "notion.ai", "www.notion.ai", "notion.com", "www.notion.com", "notion.so", "www.notion.so",
 ];
 const DEFAULT_AI_URL = "https://chat.deepseek.com/";
 
@@ -54,7 +54,22 @@ document.getElementById("settings").addEventListener("click", () => {
     const active = tabs.find((t) => t.active && t.url && SUPPORTED_HOSTS.some((h) => t.url.includes(h)));
     const anySupported = active || tabs.find((t) => t.url && SUPPORTED_HOSTS.some((h) => t.url.includes(h)));
     if (anySupported) {
-      chrome.tabs.sendMessage(anySupported.id, { type: "zs-open-menu" });
+      chrome.tabs.sendMessage(anySupported.id, { type: "zs-open-menu" }, async () => {
+        // A Notion SPA tab may have survived an extension update or redirected
+        // notion.ai -> notion.com before Chrome registered the content script.
+        // Repair that exact missing-injection case without making the user hunt
+        // through chrome://extensions. Existing scripts answer normally and are
+        // never injected twice.
+        if (!chrome.runtime.lastError) return;
+        let host = "";
+        try { host = new URL(anySupported.url).hostname; } catch {}
+        if (!/(^|\.)notion\.(ai|so|com)$/.test(host)) return;
+        try {
+          await chrome.scripting.insertCSS({ target:{ tabId:anySupported.id }, files:["overlay.css"] });
+          await chrome.scripting.executeScript({ target:{ tabId:anySupported.id }, files:["core/config.js","core/parser.js","providers/notion.js","core/tool-routing.js","core/main.js"] });
+          chrome.tabs.sendMessage(anySupported.id, { type:"zs-open-menu" });
+        } catch (e) { console.warn("Multi-Script Notion repair failed", e); }
+      });
       chrome.tabs.update(anySupported.id, { active: true });
     } else {
       chrome.tabs.create({ url: DEFAULT_AI_URL });

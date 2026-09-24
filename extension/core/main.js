@@ -132,6 +132,7 @@
     lastGenAt: 0,
     started: false,
     starting: false,
+    chatOnly: false, // professional studio prompt/skills without requiring any MCP engine
     // The conversation a bootstrap belongs to + a generation counter. If the user
     // navigates to another chat mid/post-bootstrap, syncSessionState bumps the
     // counter (invalidating the in-flight startSession) and clears `starting`, so
@@ -264,7 +265,10 @@
 
   async function submitAndGetBase(text, images) {
     captureSendToken();
-    diag("send", { text: String(text).slice(0, 60), busy: P.isBusyNow() });
+    // Arena Direct Max can re-route each turn. Prepare once outside the retry
+    // loop so a failed send never stacks duplicate routing signals.
+    const outboundText = P.prepareOutboundPrompt ? P.prepareOutboundPrompt(text) : text;
+    diag("send", { text: String(outboundText).slice(0, 60), busy: P.isBusyNow() });
     A.injecting = true;
     ui.inputCover(true);
     try {
@@ -305,7 +309,7 @@
         }
         await jitterBeforeSend();
         diag("submit.typeAndSend", { hasImages: !!(images && images.length) });
-        await P.typeAndSend(text, images);
+        await P.typeAndSend(outboundText, images);
         // Re-arm the pre-hide window NOW that typeAndSend has returned (the send
         // was just clicked, so our result turn is about to render). The initial
         // arm above can EXPIRE during an image upload - typeAndSend blocks ~3-6s
@@ -1642,9 +1646,10 @@
     const providerProfile = P.getStartupProfilePrompt ? P.getStartupProfilePrompt() : "";
     const economy = ZS.economyPrompt ? ZS.economyPrompt(P.id, ui.getUsageMode()) : "";
     const behavior = ui.getProviderBehavior ? ui.getProviderBehavior() : { promptSkills: "automatic", loops: "balanced" };
-    const quality = behavior.promptSkills === "automatic" && ZS.qualityAmplifierPrompt ? ZS.qualityAmplifierPrompt(ui.getQualityLevel()) : "";
+    const skillMesh = ZS.skillToolCoveragePrompt ? ZS.skillToolCoveragePrompt(ui.getSkillDepth()) : ""; // always-on capability enhancement; promptSkills controls rewriting only
     const providerBehavior = ZS.providerBehaviorPrompt ? ZS.providerBehaviorPrompt(behavior, P.displayName || P.id) : "";
-    const custom = [economy, quality, providerBehavior, ui.getCustomPrompt()].filter(Boolean).join("\n\n");
+    const sessionMode = A.chatOnly && ZS.chatOnlyPrompt ? ZS.chatOnlyPrompt(P.displayName || P.id) : "";
+    const custom = [sessionMode, economy, skillMesh, providerBehavior, ui.getCustomPrompt()].filter(Boolean).join("\n\n");
     const base = ZS.buildSystemPrompt({
       siteName: P.displayName,
       customPrompt: custom,
@@ -1835,8 +1840,9 @@
   // ════════════════════════════════════════════════════════════════════════
   //  SESSION BOOTSTRAP  ("Starting Up" animated chip, shown in the conversation)
   // ════════════════════════════════════════════════════════════════════════
-  async function startSession() {
+  async function startSession({chatOnly=false} = {}) {
     if (A.running || A.starting) return;
+    A.chatOnly=!!chatOnly;
     const claimKey = bootstrapClaimKey();
     if (A.started || bootstrapClaims.has(claimKey)) {
       ui.toast("This chat already received the Multi-Script startup prompt. Open a new chat to start again.");
@@ -1866,14 +1872,13 @@
     P.setInputLock(true); // block user input during bootstrap
     ui.inputCover(true);  // cover the composer ("Working…") for the WHOLE Starting Up
     try {
-      await ensureTools(true); // boot: always take a fresh catalogue (the TTL then
-                               // covers the list_commands / list_mcp_servers calls
-                               // the model makes seconds later)
-      if (!alive()) return;
-      if (!A.toolList.length) {
-        ui.banner("warn", "Bridge or engine offline",
-          "Could not fetch MCP tools. Run the bridge and connect at least one configured engine, then try again.");
-        return;
+      if (!A.chatOnly) {
+        await ensureTools(true); // native-engine sessions require a fresh exact catalogue
+        if (!alive()) return;
+        if (!A.toolList.length) {
+          ui.banner("warn", "Bridge or engine offline", "Could not fetch MCP tools. Connect Roblox Studio, Unity, Godot, Blender, or another configured MCP engine—or use Start without engine.");
+          return;
+        }
       }
       const modeState = await P.ensureComposerReady("startup");
       if (!alive()) return;
@@ -1933,7 +1938,7 @@
       A.started = true;
       rememberSession(P.conversationKey()); // survives virtualization AND reloads
       ui.setStarted(true);
-      ui.toast(`Agent ready. Ask ${P.displayName} to build something.`);
+      ui.toast(A.chatOnly ? `Studio profile ready in ${P.displayName} · no engine connected.` : `Agent ready. Ask ${P.displayName} to build something.`);
     } catch (e) {
       if (!bootstrapAccepted) bootstrapClaims.delete(claimKey);
       if (alive()) ui.banner("warn", "Startup failed", String((e && e.message) || e));
@@ -2550,7 +2555,7 @@
   //  UI  (control panel, onboarding, stop button, banners, toast, input cover)
   // ════════════════════════════════════════════════════════════════════════
   const ui = (() => {
-    let root, bar, dot, brandEl, stateEl, actionBtn, stopBtn, switchBtn, supportBtn, discordEl, menuEl, unstableEl;
+    let root, bar, dot, brandEl, stateEl, actionBtn, chatOnlyBtn, stopBtn, switchBtn, supportBtn, discordEl, menuEl, unstableEl;
     let cover, coverRaf, barRaf;
     let openMenuFn = null; // set by build(); lets the popup force the panel open via runtime message
     let bridgeOk = false, studioDown = false, placeDown = false, appDown = false, addonOk = false, studioProcUp = false;
@@ -2562,6 +2567,17 @@
       showOverview: true, defaultTab: "agent"
     };
     let menuPrefs = { ...DEFAULT_MENU_PREFS };
+    const MENU_PREF_ENUMS = { density:["compact","comfortable","spacious"], width:["small","medium","wide","studio"], scale:["90","100","115"], radius:["sharp","soft","round"], theme:["auto","midnight","graphite","frost","synthwave","forest"], font:["system","rounded","mono"], backdrop:["solid","glass","mesh"], motion:["full","reduced","none"], defaultTab:["agent","engines","sites","help"] };
+    function sanitizeMenuPrefs(raw) {
+      const out={...DEFAULT_MENU_PREFS}, src=raw && typeof raw==="object" ? raw : {};
+      for(const [key,allowed] of Object.entries(MENU_PREF_ENUMS)) if(allowed.includes(String(src[key]))) out[key]=String(src[key]);
+      if(/^#[0-9a-f]{6}$/i.test(src.accent||"")) out.accent=src.accent;
+      if(typeof src.brandName==="string" && src.brandName.trim()) out.brandName=src.brandName.trim().slice(0,28);
+      if(typeof src.brandIcon==="string" && src.brandIcon) out.brandIcon=src.brandIcon.slice(0,3);
+      if(typeof src.tagline==="string") out.tagline=src.tagline.trim().slice(0,60);
+      if(typeof src.showOverview==="boolean") out.showOverview=src.showOverview;
+      return out;
+    }
     function applyMenuPrefs() {
       if (!root) return;
       const accent = /^#[0-9a-f]{6}$/i.test(menuPrefs.accent || "") ? menuPrefs.accent : DEFAULT_MENU_PREFS.accent;
@@ -2582,7 +2598,7 @@
       }
     }
     function saveMenuPrefs() { try { chrome.storage.local.set({ msMenuPreferences: menuPrefs }); } catch {} applyMenuPrefs(); }
-    try { chrome.storage.local.get("msMenuPreferences", (r) => { if (r && r.msMenuPreferences) menuPrefs = { ...DEFAULT_MENU_PREFS, ...r.msMenuPreferences }; applyMenuPrefs(); if (menuEl && !menuEl.hidden) buildMenu(); }); } catch {}
+    try { chrome.storage.local.get("msMenuPreferences", (r) => { if (r && r.msMenuPreferences) menuPrefs = sanitizeMenuPrefs(r.msMenuPreferences); applyMenuPrefs(); if (menuEl && !menuEl.hidden) buildMenu(); }); } catch {}
 
     function build() {
       root = document.createElement("div");
@@ -2598,6 +2614,7 @@
           <span id="zs-brand">Multi-Script <span class="zs-free">v${EXT_VERSION}</span></span>
           <span id="zs-state"></span>
           <button id="zs-action"></button>
+          <button id="zs-chat-only" title="Start the full Multi-Script studio prompt and starter profile without requiring an engine">Start without engine</button>
           <button id="zs-stop" hidden>■ Stop</button>
           <a id="zs-discord" href="https://discord.gg/D5G2HAzX8z" target="_blank" rel="noopener" title="Need help? Join our Discord"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg></a>
           <button id="zs-switch" aria-label="Switch AI and options" title="Switch AI, custom prompt, support"><span id="zs-switch-name"></span><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
@@ -2614,6 +2631,7 @@
       applyMenuPrefs();
       stateEl = root.querySelector("#zs-state");
       actionBtn = root.querySelector("#zs-action");
+      chatOnlyBtn = root.querySelector("#zs-chat-only");
       stopBtn = root.querySelector("#zs-stop");
       switchBtn = root.querySelector("#zs-switch");
       supportBtn = root.querySelector("#zs-support");
@@ -2628,6 +2646,7 @@
       document.documentElement.classList.add(`zs-site-${P.id}`);
 
       actionBtn.addEventListener("click", onActionClick);
+      chatOnlyBtn.addEventListener("click", () => startSession({chatOnly:true}));
       stopBtn.addEventListener("click", stopLoop);
       unstableEl = root.querySelector("#zs-unstable");
       if (unstableEl) {
@@ -2684,6 +2703,12 @@
     function onActionClick() {
       const kind = actionBtn.dataset.kind;
       if (kind === "start" || kind === "start-degraded") startSession();
+      else if (kind === "open-provider" && P.openAIChat) {
+        P.openAIChat().then((ok) => {
+          if (!ok) toast("Open Notion AI/Ask AI, then Multi-Script will attach automatically.");
+          renderBar();
+        });
+      }
     }
 
     // ── Custom prompt (persisted) ───────────────────────────────────────────
@@ -2699,19 +2724,38 @@
     }
     let customPrompt = "";
     let usageMode = "balanced";
-    let qualityLevel = "polished";
+    let skillDepth = "full";
     const DEFAULT_PROVIDER_BEHAVIOR = { promptSkills: "automatic", loops: "balanced", creativeSurface: "auto" };
+    const PROVIDER_BEHAVIOR_ENUMS = { promptSkills:["off","suggest","automatic"], loops:["fast","balanced","rigorous"], creativeSurface:["auto","engine","figma","canvas"] };
+    function sanitizeProviderBehavior(raw) { const src=raw&&typeof raw==="object"?raw:{}; const out={...DEFAULT_PROVIDER_BEHAVIOR}; for(const [k,a] of Object.entries(PROVIDER_BEHAVIOR_ENUMS)) if(a.includes(src[k])) out[k]=src[k]; return out; }
+    function sanitizeProviderBehaviorMap(raw) { const out={}; if(raw&&typeof raw==="object") for(const [id,v] of Object.entries(raw)) if(/^[a-z0-9_-]{1,40}$/i.test(id)) out[id]=sanitizeProviderBehavior(v); return out; }
     let providerBehaviorMap = {};
-    function getProviderBehavior() { return { ...DEFAULT_PROVIDER_BEHAVIOR, ...(providerBehaviorMap[P.id] || {}) }; }
+    function getProviderBehavior() { return sanitizeProviderBehavior(providerBehaviorMap[P.id]); }
     function setProviderBehavior(patch) {
       providerBehaviorMap[P.id] = { ...getProviderBehavior(), ...patch };
       try { chrome.storage.local.set({ msProviderBehavior: providerBehaviorMap }); } catch {}
     }
-    try { chrome.storage.local.get("msProviderBehavior", (r) => { if (r && r.msProviderBehavior) { providerBehaviorMap = r.msProviderBehavior; if (menuEl && !menuEl.hidden) buildMenu(); } }); } catch {}
+    try { chrome.storage.local.get("msProviderBehavior", (r) => { if (r && r.msProviderBehavior) { providerBehaviorMap = sanitizeProviderBehaviorMap(r.msProviderBehavior); if (menuEl && !menuEl.hidden) buildMenu(); } }); } catch {}
     try { chrome.storage.local.get("zsUsageOptimizer", (r) => { if (r && ["off","balanced","compact"].includes(r.zsUsageOptimizer)) { usageMode = r.zsUsageOptimizer; if (menuEl && !menuEl.hidden) buildMenu(); } }); } catch {}
     function getUsageMode() { return usageMode; }
-    try { chrome.storage.local.get("zsQualityAmplifier", (r) => { if (r && ["off","polished","ambitious"].includes(r.zsQualityAmplifier)) { qualityLevel = r.zsQualityAmplifier; if (menuEl && !menuEl.hidden) buildMenu(); } }); } catch {}
-    function getQualityLevel() { return qualityLevel; }
+    try { chrome.storage.local.get("zsSkillToolDepth", (r) => { if (r && ["focused","full","maximum"].includes(r.zsSkillToolDepth)) { skillDepth = r.zsSkillToolDepth; if (menuEl && !menuEl.hidden) buildMenu(); } }); } catch {}
+    function getSkillDepth() { return skillDepth; }
+    const SETTINGS_BACKUP_SCHEMA = 1;
+    function buildSettingsBackup() {
+      return { product:"Multi-Script", schema:SETTINGS_BACKUP_SCHEMA, exportedBy:EXT_VERSION, appearance:sanitizeMenuPrefs(menuPrefs), providerBehavior:sanitizeProviderBehaviorMap(providerBehaviorMap), usageOptimizer:usageMode, specialistDepth:skillDepth, customInstructions:customPrompt.slice(0,12000), starterProfile:{provider:P.id,id:P.getAutoRoutingProfile?P.getAutoRoutingProfile():""}, notionPreferredModel:P.id==="notion"&&P.getAutoRoutingProfile?P.getAutoRoutingProfile():"", exclusions:["API keys","integration credentials","MCP launch commands","runtime state"] };
+    }
+    function applySettingsBackup(raw) {
+      if(!raw||raw.product!=="Multi-Script"||raw.schema!==SETTINGS_BACKUP_SCHEMA) throw new Error("Unsupported Multi-Script settings backup");
+      menuPrefs=sanitizeMenuPrefs(raw.appearance);
+      providerBehaviorMap=sanitizeProviderBehaviorMap(raw.providerBehavior);
+      usageMode=["off","balanced","compact"].includes(raw.usageOptimizer)?raw.usageOptimizer:"balanced";
+      skillDepth=["focused","full","maximum"].includes(raw.specialistDepth)?raw.specialistDepth:"full";
+      customPrompt=typeof raw.customInstructions==="string"?raw.customInstructions.slice(0,12000):"";
+      if(P.setAutoRoutingProfile){const id=raw.starterProfile&&raw.starterProfile.provider===P.id?raw.starterProfile.id:raw.notionPreferredModel;P.setAutoRoutingProfile(typeof id==="string"?id:"");}
+      try{chrome.storage.local.set({msSettingsSchemaVersion:SETTINGS_BACKUP_SCHEMA,msMenuPreferences:menuPrefs,msProviderBehavior:providerBehaviorMap,zsUsageOptimizer:usageMode,zsSkillToolDepth:skillDepth,zsCustomPrompt:customPrompt});}catch{}
+      applyMenuPrefs();
+      return true;
+    }
     try {
       chrome.storage.local.get("zsCustomPrompt", (r) => {
         if (r && typeof r.zsCustomPrompt === "string") {
@@ -2908,26 +2952,28 @@
       </section>`;
       const providerBehaviorHtml = `<section class="zs-menu-sec" data-zs-tab="agent">
         <div class="zs-sec-label"><span>${esc(P.displayName || P.id)} behavior</span><span class="zs-provider-badge">saved per provider</span></div>
-        <div class="zs-setting-title">Prompt skills</div>
+        <div class="zs-setting-title">Prompt rewriting <span class="zs-provider-badge">skills always active</span></div>
         <div class="zs-choice-stack">
-          <button class="zs-behavior-opt${providerBehavior.promptSkills === "off" ? " active" : ""}" data-prompt-skills="off"><b>Off — literal prompt</b><span>Does not rewrite your request, recommend skills, or add creative details. Fastest and most predictable.</span></button>
-          <button class="zs-behavior-opt${providerBehavior.promptSkills === "suggest" ? " active" : ""}" data-prompt-skills="suggest"><b>Suggest only</b><span>Names useful skills but waits for your approval before changing or expanding the prompt.</span></button>
-          <button class="zs-behavior-opt${providerBehavior.promptSkills === "automatic" ? " active" : ""}" data-prompt-skills="automatic"><b>Automatic</b><span>Silently improves underspecified prompts and applies the strongest relevant skills while preserving intent.</span></button>
+          <button class="zs-behavior-opt${providerBehavior.promptSkills === "off" ? " active" : ""}" data-prompt-skills="off"><b>Off — literal prompt</b><span>Keeps your exact wording. All relevant skills and tools still improve the actual execution.</span></button>
+          <button class="zs-behavior-opt${providerBehavior.promptSkills === "suggest" ? " active" : ""}" data-prompt-skills="suggest"><b>Suggest rewrite</b><span>May offer an optional improved prompt without blocking work. Skills and tools remain active either way.</span></button>
+          <button class="zs-behavior-opt${providerBehavior.promptSkills === "automatic" ? " active" : ""}" data-prompt-skills="automatic"><b>Automatic rewrite</b><span>Silently clarifies reversible missing details. Explicit intent stays binding and skills remain independently active.</span></button>
         </div>
+        <div class="zs-menu-note"><b>Current behavior:</b> rewrite ${providerBehavior.promptSkills} · ${providerBehavior.loops} checks · ${providerBehavior.creativeSurface} creative routing · ${skillDepth} specialist depth · ${usageMode} usage.</div>
         <div class="zs-setting-title">Production checks</div>
         <div class="zs-choice-stack">
           <button class="zs-behavior-opt${providerBehavior.loops === "fast" ? " active" : ""}" data-loop-mode="fast"><b>Fast — loops disabled</b><span>Skips workflow plans, critic loops, scorecards, and test matrices. Keeps only essential safety or compile checks.</span></button>
           <button class="zs-behavior-opt${providerBehavior.loops === "balanced" ? " active" : ""}" data-loop-mode="balanced"><b>Balanced</b><span>One focused verification and critic pass for meaningful changes; trivial edits finish immediately.</span></button>
           <button class="zs-behavior-opt${providerBehavior.loops === "rigorous" ? " active" : ""}" data-loop-mode="rigorous"><b>Rigorous</b><span>Plans, tests, gathers evidence, critiques, and revises for up to three rounds. Slowest, highest confidence.</span></button>
         </div>
+        <div class="zs-menu-actions"><button id="ms-reset-agent-settings" class="zs-mini-action">Reset agent behavior</button></div>
       </section>`;
       const qualityHtml = `<section class="zs-menu-sec" data-zs-tab="agent">
-        <div class="zs-sec-label"><span>Quality amplifier</span></div>
-        <div class="zs-menu-note">Automatically expands short requests into a cohesive brief while preserving your idea. Example: “cool shop UI with studs” gains hierarchy, material rules, states, motion, responsive behavior, accessibility, and a polish pass.</div>
+        <div class="zs-sec-label"><span>Studio skill coverage</span></div>
+        <div class="zs-menu-note">Controls how many specialized skills and tools work together on each result. They improve their own game-development aspects directly; no generic multiplier replaces them.</div>
         <div class="zs-quality-grid">
-          ${[["off","Off"],["polished","Polished"],["ambitious","Ambitious"]].map(([id,label]) => `<button class="zs-quality-opt${qualityLevel === id ? " active" : ""}" data-quality="${id}">${label}</button>`).join("")}
+          ${[["focused","Focused"],["full","Full studio"],["maximum","Maximum detail"]].map(([id,label]) => `<button class="zs-quality-opt${skillDepth === id ? " active" : ""}" data-skill-depth="${id}">${label}</button>`).join("")}
         </div>
-        <div class="zs-economy-note">${qualityLevel === "off" ? "Execute requests literally." : qualityLevel === "ambitious" ? "Maximum creative direction and polish without changing the requested scope." : "Professional defaults and complete states without unnecessary expansion."}</div>
+        <div class="zs-economy-note">${skillDepth === "maximum" ? "Broadest relevant specialist mesh and deep craft passes." : skillDepth === "focused" ? "Core disciplines plus every directly relevant specialist." : "Broad professional studio coverage for every request."}</div>
       </section>`;
 
       const usageHtml = `<section class="zs-menu-sec" data-zs-tab="agent">
@@ -2938,12 +2984,14 @@
         </div>
         <div class="zs-economy-note">${usageMode === "off" ? "No automatic optimization." : usageMode === "compact" ? "Lowest usage; correctness and full error evidence are preserved." : "Fewer repeated words and unnecessary calls, with normal detail when needed."}</div>
       </section>`;
-      const notionProfiles = P.id === "notion" && P.autoRoutingProfiles ? P.autoRoutingProfiles() : [];
-      const activeNotionProfile = P.id === "notion" && P.getAutoRoutingProfile ? P.getAutoRoutingProfile() : "";
+      const notionProfiles = P.autoRoutingProfiles ? P.autoRoutingProfiles() : [];
+      const activeNotionProfile = P.getAutoRoutingProfile ? P.getAutoRoutingProfile() : "";
+      const profileProviderLabel = P.id === "arena" ? "Arena Direct Max" : "Notion Auto";
+      const profileBoundary = P.id === "arena" ? "The adaptive profile classifies every outgoing turn and asks Arena Direct Max to use its strongest legitimately available model for that turn. Multi-Script never clicks the picker, guarantees a backend model, or bypasses plans, quotas, verification, availability, or access." : "to use it free, you need a business trial. Multi-Script does not bypass subscriptions, Business-trial requirements, plan limits, or Notion’s model picker.";
       const notionProfileHtml = notionProfiles.length ?
         `<section class="zs-menu-sec zs-notion-model-sec" data-zs-tab="agent">
-          <div class="zs-sec-label"><span>Notion Auto preferred model</span></div>
-          <div class="zs-menu-note">Choose the real model you want Notion Auto to route to. Choose the model request Multi-Script should place at startup. It sends one focused prompt through Notion Auto and never touches Notion’s direct model picker. Future-ready profiles fall back honestly until Notion exposes that model. The request is placed at the top once per new chat; the complete shared Multi-Script skills, tools, quality, and provider settings follow it unchanged. No fake model-personality prompt is added.</div>
+          <div class="zs-sec-label"><span>${P.id === "arena" ? `${profileProviderLabel} routing profile` : `${profileProviderLabel} preferred model`}</span><span class="zs-provider-badge">prompt-only</span></div>
+          <div class="zs-menu-note">${profileBoundary} ${P.id === "arena" ? "The startup contract is placed once, and the adaptive profile adds a compact capability signal to each turn so Arena can re-route as the task changes." : "The request is placed once at the top of each new chat; the full shared Multi-Script studio prompt follows unchanged. If unavailable, the provider must use its best legitimately available model without impersonation."}</div>
           <div class="zs-profile-grid">
             ${notionProfiles.map((x) => `<button class="zs-behavior-opt zs-profile-opt${activeNotionProfile === x.id ? " active" : ""}" data-profile="${x.id}"><b>${x.label}</b><span>${x.description}</span></button>`).join("")}
             <button class="zs-profile-opt${!activeNotionProfile ? " active" : ""}" data-profile="">Standard Auto</button>
@@ -2981,11 +3029,11 @@
            <div class="zs-rbx-grid">${passes}</div>
          </section>
          <section class="zs-menu-sec zs-elevenlabs-sec" data-zs-tab="agent">
-           <div class="zs-sec-label"><span>ElevenLabs audio</span><span class="zs-secret-state ${elevenLabsState.configured ? "on" : "off"}">${elevenLabsState.loading ? "checking" : elevenLabsState.configured ? "configured" : "key required"}</span></div>
-           <div class="zs-menu-note">Every player must supply their own ElevenLabs API key. The key is sent directly to the local bridge, stored only in <b>runtime/.env</b> on this computer with private file permissions, and never saved in browser storage, prompts, chats, diagnostics, or release ZIPs. One key works with every connected game engine.</div>
+           <div class="zs-sec-label"><span>Audio generation</span><span class="zs-secret-state ${elevenLabsState.configured ? "on" : "off"}">${elevenLabsState.loading ? "checking" : elevenLabsState.elevenLabsConfigured ? "local + cloud" : "local ready"}</span></div>
+           <div class="zs-menu-note">Free local sound generation is ready without an account, network request, or API key. ElevenLabs remains an optional cloud-quality provider: if supplied, its key is sent only to the local bridge, stored in <b>runtime/.env</b> with private permissions, and never saved in browser storage, prompts, chats, diagnostics, or release ZIPs.</div>
            <div class="zs-secret-field"><input id="ms-elevenlabs-key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your own ElevenLabs API key"><button id="ms-elevenlabs-reveal" class="zs-mini-action" type="button">Show</button></div>
-           <div class="zs-menu-actions"><button id="ms-elevenlabs-save" class="zs-mini-action">Save key locally</button><button id="ms-elevenlabs-remove" class="zs-mini-action" ${elevenLabsState.configured ? "" : "disabled"}>Remove key</button><button id="ms-elevenlabs-refresh" class="zs-mini-action">Refresh status</button></div>
-           <div id="ms-elevenlabs-message" class="zs-menu-note">${elevenLabsState.error ? esc(elevenLabsState.error) : elevenLabsState.configured ? "Ready for sound generation in Roblox, Unity, Godot, Blender, and other connected engines." : "Audio generation stays disabled until this player saves a key."}</div>
+           <div class="zs-menu-actions"><button id="ms-elevenlabs-save" class="zs-mini-action">Save key locally</button><button id="ms-elevenlabs-remove" class="zs-mini-action" ${elevenLabsState.elevenLabsConfigured ? "" : "disabled"}>Remove key</button><button id="ms-elevenlabs-refresh" class="zs-mini-action">Refresh status</button></div>
+           <div id="ms-elevenlabs-message" class="zs-menu-note">${elevenLabsState.error ? esc(elevenLabsState.error) : elevenLabsState.elevenLabsConfigured ? "Local audio and optional ElevenLabs cloud generation are ready." : "Local audio is ready now; an ElevenLabs key is optional for complex cloud-generated sounds."}</div>
          </section>
          <section class="zs-menu-sec" data-zs-tab="agent">
            <div class="zs-sec-label"><span>Custom instructions</span></div>
@@ -3002,6 +3050,11 @@
            <input id="zs-mcp-url" class="zs-mcp-field" placeholder="MCP start command from the server documentation" />
            <div class="zs-set-row"><button id="zs-mcp-add">Add addon</button><span id="zs-mcp-status"></span></div>
            <div class="zs-menu-actions"><button id="zs-refresh-bridge" class="zs-mini-action">Refresh status</button><button id="zs-restart-bridge" class="zs-mini-action">Restart MCP servers</button></div>
+         </section>
+         <section class="zs-menu-sec" data-zs-tab="help">
+           <div class="zs-sec-label"><span>Settings backup</span><span class="zs-provider-badge">validated</span></div>
+           <div class="zs-menu-note">Copy or restore appearance, every provider’s behavior, specialist depth, usage optimization, custom instructions, and the Notion preferred-model request. Secrets, API keys, MCP launch commands, and runtime state are deliberately excluded.</div>
+           <div class="zs-menu-actions"><button id="ms-copy-settings" class="zs-mini-action">Copy settings</button><button id="ms-import-settings" class="zs-mini-action">Import from clipboard</button></div>
          </section>
          <section class="zs-menu-sec" data-zs-tab="help">
            <div class="zs-sec-label"><span>Troubleshooting</span></div>
@@ -3032,19 +3085,21 @@
       const saveIdentity=menuEl.querySelector("#ms-save-identity"); if(saveIdentity) saveIdentity.addEventListener("click",()=>{ menuPrefs.brandIcon=(menuEl.querySelector("#ms-brand-icon").value||"✦").slice(0,3); menuPrefs.brandName=(menuEl.querySelector("#ms-brand-name").value.trim()||"Multi-Script").slice(0,28); menuPrefs.tagline=menuEl.querySelector("#ms-brand-tagline").value.trim().slice(0,60); saveMenuPrefs(); buildMenu(); toast("Identity saved"); });
       const resetMenu = menuEl.querySelector("#ms-reset-menu");
       if (resetMenu) resetMenu.addEventListener("click", () => { menuPrefs = { ...DEFAULT_MENU_PREFS }; menuTab = "agent"; saveMenuPrefs(); buildMenu(); toast("Menu reset"); });
+      const resetAgentSettings=menuEl.querySelector("#ms-reset-agent-settings");
+      if(resetAgentSettings) resetAgentSettings.addEventListener("click",()=>{ providerBehaviorMap[P.id]={...DEFAULT_PROVIDER_BEHAVIOR}; skillDepth="full"; usageMode="balanced"; try{chrome.storage.local.set({msProviderBehavior:providerBehaviorMap,zsSkillToolDepth:skillDepth,zsUsageOptimizer:usageMode});}catch{} menuTab="agent"; buildMenu(); toast(`${P.displayName||P.id}: agent behavior reset`); });
       menuEl.querySelectorAll("[data-creative-surface]").forEach((b) => b.addEventListener("click", () => {
         setProviderBehavior({ creativeSurface: b.dataset.creativeSurface }); menuTab = "agent"; buildMenu(); toast(`${P.displayName || P.id}: ${b.dataset.creativeSurface} creative routing`);
       }));
             menuEl.querySelectorAll("[data-prompt-skills]").forEach((b) => b.addEventListener("click", () => {
-        setProviderBehavior({ promptSkills: b.dataset.promptSkills }); menuTab = "agent"; buildMenu(); toast(`${P.displayName || P.id}: prompt skills ${b.dataset.promptSkills}`);
+        setProviderBehavior({ promptSkills: b.dataset.promptSkills }); menuTab = "agent"; buildMenu(); toast(`${P.displayName || P.id}: prompt rewriting ${b.dataset.promptSkills}`);
       }));
       menuEl.querySelectorAll("[data-loop-mode]").forEach((b) => b.addEventListener("click", () => {
         setProviderBehavior({ loops: b.dataset.loopMode }); menuTab = "agent"; buildMenu(); toast(`${P.displayName || P.id}: ${b.dataset.loopMode} production`);
       }));
-            menuEl.querySelectorAll(".zs-quality-opt").forEach((b) => b.addEventListener("click", () => {
-        qualityLevel = b.dataset.quality || "polished";
-        try { chrome.storage.local.set({ zsQualityAmplifier: qualityLevel }); } catch {}
-        menuTab = "agent"; buildMenu(); toast(`Quality amplifier: ${qualityLevel}`);
+      menuEl.querySelectorAll(".zs-quality-opt").forEach((b) => b.addEventListener("click", () => {
+        skillDepth = b.dataset.skillDepth || "full";
+        try { chrome.storage.local.set({ zsSkillToolDepth: skillDepth }); } catch {}
+        menuTab = "agent"; buildMenu(); toast(`Studio skill coverage: ${skillDepth}`);
       }));
       menuEl.querySelectorAll(".zs-economy-opt").forEach((b) => b.addEventListener("click", () => {
         usageMode = b.dataset.economy || "balanced";
@@ -3052,7 +3107,7 @@
         menuTab = "agent"; buildMenu(); toast(`Usage optimizer: ${usageMode}`);
       }));
       const checkProfile = menuEl.querySelector("#zs-check-profile");
-      if (checkProfile) checkProfile.addEventListener("click", () => { const d=P.routingProfileDiagnostics ? P.routingProfileDiagnostics() : null; const st=menuEl.querySelector("#zs-profile-status"); if(st) st.textContent=d && d.promptReady ? `Prompt routing ready · requests ${d.requestedModel} · no direct picker · sent once per new chat` : "Standard Auto · no model routing request"; });
+      if (checkProfile) checkProfile.addEventListener("click", () => { const d=P.routingProfileDiagnostics ? P.routingProfileDiagnostics() : null; const st=menuEl.querySelector("#zs-profile-status"); if(st) st.textContent=d && d.promptReady ? (d.perTurnRouting ? `Adaptive routing ready · re-evaluates every turn · ${d.dynamicCapabilities.length} capability signals · no direct picker` : `Prompt routing ready · requests ${d.requestedModel} · no direct picker · sent once per new chat`) : "Standard Auto · no routing request"; });
             const copyProfile = menuEl.querySelector("#zs-copy-profile");
       if (copyProfile) copyProfile.addEventListener("click", async () => {
         const text = P.getStartupProfilePrompt ? P.getStartupProfilePrompt() : "";
@@ -3073,6 +3128,9 @@
         if (!r || r.error) { toast((r && r.error) || "Restart failed"); buildMenu(); return; }
         await waitForBridgeBack(null, 20000); await ensureTools(true); buildMenu(); toast("MCP servers restarted");
       });
+      const copySettings=menuEl.querySelector("#ms-copy-settings"),importSettings=menuEl.querySelector("#ms-import-settings");
+      if(copySettings) copySettings.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(JSON.stringify(buildSettingsBackup(),null,2));toast("Validated settings backup copied");}catch{toast("Could not copy settings");}});
+      if(importSettings) importSettings.addEventListener("click",async()=>{try{const raw=JSON.parse(await navigator.clipboard.readText());applySettingsBackup(raw);menuTab="help";buildMenu();toast("Settings restored and validated");}catch(e){toast(`Settings import rejected: ${String(e&&e.message||e).slice(0,90)}`);}});
       const providerTest = menuEl.querySelector("#zs-provider-selftest");
       if (providerTest) providerTest.addEventListener("click", async () => {
         const result = P.selfTest ? P.selfTest() : { provider: P.id, ready: !!P.getEditor(), recommendation: "Basic editor check only." };
@@ -3081,7 +3139,7 @@
       });
       const copyDiag = menuEl.querySelector("#zs-copy-diagnostics");
       if (copyDiag) copyDiag.addEventListener("click", async () => {
-        const safe = { zeroScript: EXT_VERSION, provider: P.id, urlHost: location.hostname, bridgeConnected: !!(A.bridge && A.bridge.connected), servers: (A.bridge && A.bridge.servers) || [], engines: (A.bridge && A.bridge.engines) || [], advertisedTools: A.toolList.length, started: A.started, starting: A.starting };
+        const safe = { product:"Multi-Script", version:EXT_VERSION, zeroScriptBase:true, provider:P.id, urlHost:location.hostname, bridgeConnected:!!(A.bridge&&A.bridge.connected), servers:(A.bridge&&A.bridge.servers)||[], engines:(A.bridge&&A.bridge.engines)||[], advertisedTools:A.toolList.length, started:A.started, starting:A.starting, effectiveSettings:{ schema:SETTINGS_BACKUP_SCHEMA, providerBehavior:getProviderBehavior(), specialistDepth:skillDepth, usageOptimizer:usageMode, creativeSurface:getProviderBehavior().creativeSurface, customInstructionsConfigured:!!customPrompt.trim(), appearance:{theme:menuPrefs.theme,density:menuPrefs.density,width:menuPrefs.width,scale:menuPrefs.scale,motion:menuPrefs.motion}, starterRouting:P.routingProfileDiagnostics?P.routingProfileDiagnostics():null, localAudioReady:!!elevenLabsState.configured, elevenLabsConfigured:!!elevenLabsState.elevenLabsConfigured, customMcpServerCount:customMcpServers.length } };
         try { await navigator.clipboard.writeText(JSON.stringify(safe, null, 2)); toast("Diagnostics copied"); } catch { toast("Could not copy diagnostics"); }
       });
       const reloadPage = menuEl.querySelector("#zs-reload-page");
@@ -3095,7 +3153,7 @@
         buildMenu();
         const st = menuEl.querySelector("#zs-profile-status");
         if (st) { const d=P.routingProfileDiagnostics ? P.routingProfileDiagnostics() : null; st.textContent = selected ? `Saved for the next new chat · ${d && d.requestedModel ? `requests ${d.requestedModel}` : "routing request ready"} · sent once` : "Standard Auto saved for the next new chat."; }
-        toast(selected ? `Notion starter profile: ${b.textContent}` : "Notion starter profile disabled");
+        toast(selected ? `${profileProviderLabel} starter profile: ${b.textContent}` : `${profileProviderLabel} starter profile disabled`);
       }));
       const ta = menuEl.querySelector("#zs-set-text");
       const saveBtn = menuEl.querySelector("#zs-set-save");
@@ -3186,11 +3244,11 @@
         : "";
       setupCard.innerHTML =
         `<div id="zs-setup-head"><span id="zs-setup-logo">Multi-Script</span><span id="zs-setup-tag">Setup</span></div>` +
-        `<div id="zs-setup-sub">The <b>Bridge</b> is what connects this chat to Roblox Studio. Three steps and you're running.</div>` +
+        `<div id="zs-setup-sub">The <b>Bridge</b> connects supported AI chats to Roblox Studio, Unity, Godot, Blender, and other configured MCP tools. Three steps and you're running.</div>` +
         `<ol id="zs-setup-steps">` +
           `<li>Download the Bridge from GitHub</li>` +
           `<li>Run <code>start.bat</code></li>` +
-          `<li>Back here, click <b>Start Roblox agent</b></li>` +
+          `<li>Open a supported editor/MCP server, then click <b>Start agent</b></li>` +
         `</ol>` +
         `<div class="zs-setup-copy-row">` +
           `<input type="text" id="zs-setup-link" readonly value="${GITHUB_URL}">` +
@@ -3276,7 +3334,7 @@
       else if (A.starting) {
         toneClass = "starting";
         indicator = `<span class="zs-spin"></span>`;
-        msg = `Starting the Roblox agent…`;
+        msg = A.chatOnly ? `Starting the Multi-Script chat studio…` : `Starting the engine agent…`;
         label = "Starting…"; kind = "starting"; disabled = true;
       } else if (A.started) {
         // Prefer the ADVERTISED list length (A.toolList - the AGGREGATE catalogue
@@ -3294,7 +3352,10 @@
         // bridge.py), so showing it while Studio/place isn't actually usable
         // reads as "everything's fine" when tool calls will just fail. Surface
         // the real blocker instead in that case.
-        if (A.bridge && A.bridge.connected === false) {
+        if (A.chatOnly) {
+          toneClass = "active";
+          msg = `<b>Chat studio active</b> · skills and starter profile enabled · no engine execution`;
+        } else if (A.bridge && A.bridge.connected === false) {
           // placeDown/appDown/studioDown are all false in this case (they're
           // only computed when the bridge IS connected - see setStatus), so
           // without this check the bridge dropping fell through to the
@@ -3336,8 +3397,10 @@
         // an EXISTING conversation (one that has turns) we did not start.
         if (bridgeOk) {
           toneClass = "standby";
-          msg = `Standby. Start the agent, or just chat.`;
-          label = "▶︎ Start Roblox agent"; kind = "start";
+          const readyIds=((A.bridge&&A.bridge.engines)||[]).filter((e)=>e.connected===true&&e.alive).map((e)=>e.id);
+          const readyLabels=readyIds.map((id)=>id==="roblox"?"Roblox Studio":id==="unity"?"Unity":id==="godot"?"Godot":id==="blender"?"Blender":id);
+          msg = readyLabels.length ? `Standby · ${readyLabels.join(" + ")} ready. Start with tools or without an engine.` : `Standby. Start the agent, or use the chat studio.`;
+          label = readyIds.includes("roblox") ? "▶︎ Start Roblox Studio" : readyLabels.length ? `▶︎ Start ${readyLabels.join(" + ")}` : "▶︎ Start engine agent"; kind = "start";
         } else if (addonOk) {
           // Roblox is down but another MCP server is live: allow a DEGRADED start
           // (yellow). The agent runs on the other server(s); Roblox tools stay
@@ -3348,7 +3411,8 @@
             : studioProcUp
               ? `<b>Studio open but not connected</b> - open <b>Assistant Settings &gt; MCP Servers</b> in Studio, or start without it.`
               : `<b>Roblox Studio offline</b> - start with your other MCP server(s).`;
-          label = "▶︎ Start agent (Roblox offline)"; kind = "start-degraded";
+          const addonNames=((A.bridge&&A.bridge.engines)||[]).filter((e)=>e.id!=="roblox"&&e.connected===true&&e.alive).map((e)=>e.id==="unity"?"Unity":e.id==="godot"?"Godot":e.id==="blender"?"Blender":e.id);
+          label = addonNames.length ? `▶︎ Start ${addonNames.join(" + ")}` : "▶︎ Start available MCP tools"; kind = "start-degraded";
         } else {
           toneClass = "warn"; warn = true;
           msg = !A.bridge.connected
@@ -3391,6 +3455,13 @@
           if (kind === "start" || kind === "start-degraded") disabled = true;
         }
       }
+      // Notion can land on a home/page route before its AI composer mounts. Keep
+      // Multi-Script visible and actionable instead of disappearing completely.
+      if (!P.getEditor() && P.persistentBarWhenNoEditor && !A.started && !A.starting) {
+        toneClass = "warn"; warn = true;
+        msg = P.noEditorMessage || `${P.displayName} chat is not open.`;
+        label = `Open ${P.displayName} chat`; kind = "open-provider"; disabled = false;
+      }
       // Only touch the DOM when something actually changed. renderBar runs on
       // every sweep; rewriting stateEl.innerHTML each time recreated the spinner
       // <span> and RESTARTED its CSS animation, so "Starting…" appeared to stutter.
@@ -3419,6 +3490,9 @@
       // With no kind (e.g. agent active, or an existing chat) there's no primary
       // action to offer, so the button is hidden entirely.
       actionBtn.style.display = (busy || !kind) ? "none" : "";
+      const canStartChatOnly=!A.started&&!A.starting&&!busy&&(P.isFreshChat()||P.chatIsEmpty())&&!!P.getEditor()&&!(P.modeWarning&&P.modeWarning());
+      chatOnlyBtn.style.display=canStartChatOnly?"":"none";
+      chatOnlyBtn.disabled=!canStartChatOnly;
       // AI selector + tips/support: only once a session is live. Discord stays
       // visible in every state (it's the help link).
       if (switchBtn) switchBtn.style.display = showExtras ? "" : "none";
@@ -3791,7 +3865,20 @@
         if (root && bar.parentElement !== root) root.appendChild(bar);
       }
       const f = (P.getEditor && P.getEditor()) || (P.composerFrame && P.composerFrame());
-      if (!f) { bar.style.display = "none"; if (menuEl) menuEl.hidden = true; return; }
+      if (!f) {
+        if (P.persistentBarWhenNoEditor) {
+          clearAnchorPad();
+          bar.classList.remove("zs-bar-inline", "zs-bar-inside", "zs-bar-anchored");
+          bar.classList.add("zs-bar-detached");
+          if (root && bar.parentElement !== root) root.appendChild(bar);
+          bar.style.display = "flex"; bar.style.width = "min(560px, calc(100vw - 32px))";
+          bar.style.left = "auto"; bar.style.right = "16px"; bar.style.top = "auto"; bar.style.bottom = "16px";
+          if (menuEl && !menuEl.hidden) { menuEl.style.right="16px"; menuEl.style.bottom=`${(bar.offsetHeight||40)+24}px`; }
+          return;
+        }
+        bar.style.display = "none"; if (menuEl) menuEl.hidden = true; return;
+      }
+      bar.classList.remove("zs-bar-detached"); bar.style.right = ""; bar.style.bottom = "";
       bar.style.display = "flex";
       const r = f.getBoundingClientRect();
       if (!r.width) { bar.style.display = "none"; return; }
@@ -4076,7 +4163,7 @@
     }
 
     build();
-    return { setStatus, staleExtensionAlert, setStarted, setStarting, showStop, markStopping, inputCover, toast, banner, showImages, nudgeStart, updateStartGate, refreshSetup, getCustomPrompt, getUsageMode, getQualityLevel, getCustomMcpServers, openMenu: (toSupport) => openMenuFn && openMenuFn(toSupport) };
+    return { setStatus, staleExtensionAlert, setStarted, setStarting, showStop, markStopping, inputCover, toast, banner, showImages, nudgeStart, updateStartGate, refreshSetup, getCustomPrompt, getUsageMode, getSkillDepth, getCustomMcpServers, buildSettingsBackup, applySettingsBackup, openMenu: (toSupport) => openMenuFn && openMenuFn(toSupport) };
   })();
 
   // ── Live token + timer, shown ONLY on a tool call's chip detail. The
@@ -4326,13 +4413,15 @@
   //  WIRING
   // ════════════════════════════════════════════════════════════════════════
 
-  chrome.runtime.onMessage.addListener((msg) => {
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg && msg.type === "zs-status") {
       ui.setStatus({ connected: msg.connected, mcpAlive: msg.mcpAlive, studio: msg.studio, studioApp: msg.studioApp, studioProc: msg.studioProc, tools: msg.tools, servers: msg.servers, engines: msg.engines });
     }
     if (msg && msg.type === "zs-open-menu") {
       ui.openMenu(false); // from the popup's Settings button — opens at the top (Switch AI / custom prompt)
+      sendResponse({ ok:true, provider:P.id, editorFound:!!P.getEditor() });
     }
+    if (msg && msg.type === "zs-ping") sendResponse({ ok:true, provider:P.id, editorFound:!!P.getEditor() });
   });
 
   // Status poll. An orphaned content script (see bg / isContextInvalidated) gets

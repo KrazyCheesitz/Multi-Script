@@ -19,4 +19,4 @@
 - [ ] Generate full and extension-only ZIPs
 - [ ] Publish SHA-256 checksums
 - [ ] Upload screenshots, store description, privacy disclosure, and release notes
-- [ ] Tag `v5.3.1` only after smoke testing the exact uploaded archives
+- [ ] Tag `v6.8.0` only after smoke testing the exact uploaded archives

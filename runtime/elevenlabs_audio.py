@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Secure local ElevenLabs sound-effects integration for Multi-Script."""
 from pathlib import Path
-import hashlib, json, os, re, time
+import hashlib, json, os, re, time, math, random, struct, wave
 from urllib import error, parse, request
 
 HERE = Path(__file__).resolve().parent
@@ -60,14 +60,21 @@ def clear_api_key():
 
 
 def status():
+    cloud = bool(_api_key())
     return {
-        "provider": "ElevenLabs",
-        "configured": bool(_api_key()),
-        "model": MODEL_ID,
-        "endpoint": ENDPOINT,
+        "provider": "Multi-Script Audio",
+        "configured": True,
+        "defaultProvider": "local",
+        "noApiKeyRequired": True,
+        "elevenLabsConfigured": cloud,
+        "elevenLabsConfigured": cloud,
+        "providers": {
+            "local": {"available": True, "cost": "free", "network": False, "apiKey": False, "format": "wav_44100_pcm16"},
+            "elevenlabs": {"available": cloud, "configured": cloud, "model": MODEL_ID, "endpoint": ENDPOINT, "apiKey": True},
+        },
         "outputDirectory": str(OUTPUT_DIR),
-        "setupCommand": "python runtime/configure_elevenlabs.py",
-        "secretStorage": "ELEVENLABS_API_KEY environment variable or runtime/.env (local bridge only)",
+        "optionalElevenLabsSetupCommand": "python runtime/configure_elevenlabs.py",
+        "secretStorage": "Optional ELEVENLABS_API_KEY environment variable or runtime/.env (local bridge only)",
     }
 
 
@@ -88,7 +95,7 @@ def _http_error(exc):
         return f"ElevenLabs HTTP {getattr(exc, 'code', 'error')}: {getattr(exc, 'reason', exc)}"
 
 
-def generate_sound_effect(text, name="sound-effect", duration_seconds=None, loop=False,
+def _generate_elevenlabs_sound_effect(text, name="sound-effect", duration_seconds=None, loop=False,
                           prompt_influence=0.3, output_format="mp3_44100_128", opener=None):
     text = str(text or "").strip()
     if not text:
@@ -116,7 +123,7 @@ def generate_sound_effect(text, name="sound-effect", duration_seconds=None, loop
         "xi-api-key": key,
         "Content-Type": "application/json",
         "Accept": "audio/mpeg, audio/wav, application/octet-stream",
-        "User-Agent": "Multi-Script/5.3.1",
+        "User-Agent": "Multi-Script/6.13.0",
     })
     open_fn = opener or request.urlopen
     try:
@@ -147,6 +154,77 @@ def generate_sound_effect(text, name="sound-effect", duration_seconds=None, loop
     }
     path.with_suffix(path.suffix + ".json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     return metadata
+
+
+def _local_kind(text):
+    low=text.lower()
+    groups=[
+        ("explosion",("explosion","blast","boom","grenade")),
+        ("impact",("punch","impact","hit","slam","thud","kick")),
+        ("laser",("laser","blaster","ray","sci-fi shot","magic bolt")),
+        ("whoosh",("whoosh","swoosh","dash","swing","swipe")),
+        ("footstep",("footstep","step","walking","run step")),
+        ("coin",("coin","reward","success","pickup","collect","level up")),
+        ("alarm",("alarm","warning","siren","error","danger")),
+        ("rain",("rain","storm","water ambience")),
+        ("wind",("wind","air ambience","forest ambience")),
+        ("engine",("engine","motor","machine","generator","hum")),
+        ("click",("click","button","ui","menu","toggle","tap")),
+    ]
+    return next((kind for kind,words in groups if any(w in low for w in words)),"generic")
+
+
+def _generate_local_sound_effect(text,name="sound-effect",duration_seconds=None,loop=False,seed=None):
+    text=str(text or "").strip()
+    if not text: raise RuntimeError("text is required")
+    if len(text)>2500: raise RuntimeError("text must be 2500 characters or fewer")
+    kind=_local_kind(text); defaults={"click":0.16,"impact":0.55,"explosion":1.8,"laser":0.55,"whoosh":0.75,"footstep":0.32,"coin":0.7,"alarm":1.5,"rain":6.0,"wind":6.0,"engine":4.0,"generic":1.0}
+    duration=float(duration_seconds if duration_seconds is not None else defaults[kind])
+    if duration<0.05 or duration>30: raise RuntimeError("local duration_seconds must be between 0.05 and 30")
+    rate=44100;n=max(1,int(rate*duration));rng=random.Random(seed if seed is not None else int(hashlib.sha256(text.encode()).hexdigest()[:16],16))
+    out=[];lp=0.0
+    def env(t,attack=0.01,release=0.3): return min(1.0,t/max(attack,1e-4))*min(1.0,max(0.0,(duration-t))/max(release,1e-4))
+    for i in range(n):
+        t=i/rate; noise=rng.uniform(-1,1); x=0.0
+        if kind=="click": x=(math.sin(2*math.pi*(1700-900*t/duration)*t)*0.8+noise*0.18)*math.exp(-28*t)
+        elif kind=="impact": x=(math.sin(2*math.pi*(115-70*t/duration)*t)*0.85+noise*0.45)*math.exp(-7*t)
+        elif kind=="explosion":
+            lp=lp*0.92+noise*0.08;x=(lp*1.5+math.sin(2*math.pi*(62-24*t/duration)*t)*0.45)*math.exp(-2.6*t)
+        elif kind=="laser": x=(math.sin(2*math.pi*(1400-1100*t/duration)*t)+0.22*math.sin(2*math.pi*(2800-1800*t/duration)*t))*math.exp(-5*t)
+        elif kind=="whoosh":
+            lp=lp*0.7+noise*0.3;x=lp*math.sin(math.pi*min(1,t/duration))*0.9
+        elif kind=="footstep": x=(noise*0.38+math.sin(2*math.pi*92*t)*0.7)*math.exp(-14*t)
+        elif kind=="coin": x=(math.sin(2*math.pi*988*t)+0.65*math.sin(2*math.pi*1319*t))*math.exp(-3.8*t)
+        elif kind=="alarm": x=(math.sin(2*math.pi*(650+180*math.sin(2*math.pi*2.2*t))*t))*env(t,0.02,0.08)*0.72
+        elif kind=="rain":
+            lp=lp*0.22+noise*0.78;x=(lp*0.42+(0.7 if rng.random()<0.0007 else 0))*env(t,0.08,0.15)
+        elif kind=="wind":
+            lp=lp*0.985+noise*0.015;x=lp*(0.55+0.25*math.sin(2*math.pi*0.17*t))*env(t,0.2,0.25)*2.0
+        elif kind=="engine": x=(math.sin(2*math.pi*82*t)+0.35*math.sin(2*math.pi*164*t)+noise*0.06)*env(t,0.08,0.12)*0.62
+        else: x=(math.sin(2*math.pi*330*t)*0.55+noise*0.16)*env(t,0.02,0.25)*math.exp(-1.8*t)
+        out.append(max(-1.0,min(1.0,x)))
+    if loop and n>256:
+        fade=min(int(rate*0.12),n//4)
+        for i in range(fade):
+            a=i/max(1,fade-1);mixed=out[i]*a+out[n-fade+i]*(1-a);out[i]=out[n-fade+i]=mixed
+    peak=max(abs(x) for x in out) or 1;gain=min(0.95/peak,1.8)
+    OUTPUT_DIR.mkdir(parents=True,exist_ok=True);stamp=time.strftime("%Y%m%d-%H%M%S");digest=hashlib.sha256((text+str(seed)).encode()).hexdigest()[:10]
+    path=OUTPUT_DIR/f"{_safe_name(name)}-{stamp}-{digest}.wav";tmp=path.with_suffix('.wav.part')
+    with wave.open(str(tmp),'wb') as w:
+        w.setnchannels(1);w.setsampwidth(2);w.setframerate(rate);w.writeframes(b''.join(struct.pack('<h',int(max(-1,min(1,x*gain))*32767)) for x in out))
+    tmp.replace(path);audio=path.read_bytes()
+    meta={"provider":"Multi-Script Local Audio","model":"deterministic-procedural-v1","created":str(path),"format":"wav_44100_pcm16","contentType":"audio/wav","bytes":len(audio),"sha256":hashlib.sha256(audio).hexdigest(),"durationSeconds":duration,"loop":bool(loop),"prompt":text,"soundClass":kind,"seed":seed,"cost":"free","networkUsed":False,"apiKeyUsed":False,"limitations":"Procedural synthesis is strongest for UI, impacts, ambience and stylized effects; use optional ElevenLabs for complex natural recordings or speech-like material.","engineHandoff":"Import this local WAV through the connected engine MCP, configure loop/spatial/compression/bus settings, then test it in context."}
+    path.with_suffix('.wav.json').write_text(json.dumps(meta,indent=2),encoding='utf-8');return meta
+
+
+def generate_sound_effect(text,name="sound-effect",duration_seconds=None,loop=False,prompt_influence=0.3,output_format="mp3_44100_128",opener=None,provider="auto",seed=None):
+    provider=str(provider or "auto").strip().lower()
+    if provider not in {"auto","local","elevenlabs"}: raise RuntimeError("provider must be auto, local, or elevenlabs")
+    # Keyless local synthesis is the safe default. An injected opener implies an
+    # explicit cloud transport test and preserves backward-compatible testing.
+    if provider in {"auto","local"} and opener is None:
+        return _generate_local_sound_effect(text,name,duration_seconds,loop,seed)
+    return _generate_elevenlabs_sound_effect(text,name,duration_seconds,loop,prompt_influence,output_format,opener)
 
 
 def list_generated_audio(limit=50):

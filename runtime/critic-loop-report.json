@@ -1,0 +1,342 @@
+{
+  "product": "Multi-Script",
+  "version": "6.13.0",
+  "generatedAtUnix": 1790200642,
+  "durationSeconds": 188.991,
+  "verdict": "pass",
+  "rounds": [
+    {
+      "round": 1,
+      "name": "architecture and drift",
+      "verdict": "pass",
+      "findings": []
+    },
+    {
+      "round": 2,
+      "name": "complete regressions",
+      "verdict": "pass",
+      "findings": []
+    },
+    {
+      "round": 3,
+      "name": "final critic and opportunities",
+      "verdict": "pass",
+      "findings": [],
+      "recommendations": [
+        {
+          "priority": "live-validation",
+          "item": "Run attached editor smoke tests on Roblox, Unity, Godot and Blender before store publication."
+        },
+        {
+          "priority": "research",
+          "item": "Verify Mirelo official API/MCP, licensing, authentication and exports before integration."
+        },
+        {
+          "priority": "deferred",
+          "item": "Consider a VS Code extension later, reusing this bridge and schema validator."
+        }
+      ]
+    }
+  ],
+  "testChecks": [
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_all_skills_and_tools.py",
+      "passed": true,
+      "durationSeconds": 153.24,
+      "tail": "PASS exhaustive skill/tool audit: 800 skills retrieved, queried, recommended; 210 tools and all branch enums exercised\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_bridge_builtins.py",
+      "passed": true,
+      "durationSeconds": 0.315,
+      "tail": "PASS bridge built-ins and critic loop\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_brief_and_scorecard.py",
+      "passed": true,
+      "durationSeconds": 0.283,
+      "tail": "PASS general quality enhancer example and scorecard\nPASS task-first classic Roblox UI silent quality boost\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_creative_execution_standards.py",
+      "passed": true,
+      "durationSeconds": 0.12,
+      "tail": "PASS 6.8 cross-engine animation, VFX, texture and real-artifact execution standards\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_creative_surfaces.py",
+      "passed": true,
+      "durationSeconds": 0.405,
+      "tail": "PASS real SVG texture/UI creation and Figma-ready handoff\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_critic_loop_613.py",
+      "passed": true,
+      "durationSeconds": 0.229,
+      "tail": "PASS three-round product critic structure and opportunity review\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_elevenlabs_audio.py",
+      "passed": true,
+      "durationSeconds": 0.204,
+      "tail": "PASS ElevenLabs secure status, authenticated request, audio save, metadata, listing and missing-key path\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_elevenlabs_settings.py",
+      "passed": true,
+      "durationSeconds": 0.099,
+      "tail": "PASS per-user ElevenLabs local key save, sanitized status and removal\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_engine_schema_assurance_69.py",
+      "passed": true,
+      "durationSeconds": 0.343,
+      "tail": "PASS 6.9 recursive MCP schemas, strict engine binding, 800 skills, 300 virtual specialists, 210 direct tools, and risk audit\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_full_spectrum_skill_mesh.py",
+      "passed": true,
+      "durationSeconds": 0.753,
+      "tail": "PASS comprehensive skill/tool mesh: weak prompts receive simultaneous specialist coverage without a generic multiplier\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_full_spectrum_studio.py",
+      "passed": true,
+      "durationSeconds": 0.412,
+      "tail": "PASS full-spectrum studio coordination: concrete animation, UI, modeling and all supporting disciplines\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_intent_to_product_intelligence.py",
+      "passed": true,
+      "durationSeconds": 0.421,
+      "tail": "PASS 6.3 intent-to-product: all tools/skills enriched; realistic shooter becomes a coherent verified vertical slice\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_keyless_local_audio.py",
+      "passed": true,
+      "durationSeconds": 0.141,
+      "tail": "PASS free keyless local audio: 11 sound classes, deterministic WAV, no network or API key\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_mcp_resources.py",
+      "passed": true,
+      "durationSeconds": 0.284,
+      "tail": "\u001b[2m21:56:50\u001b[0m \u001b[96m[unity] launching  (/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/fake_mcp_server.py)\u001b[0m\n\u001b[2m21:56:50\u001b[0m \u001b[96m[unity] MCP server up  (1 tools advertised)\u001b[0m\nPASS MCP tools and resources transport\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_model_improvement_layer.py",
+      "passed": true,
+      "durationSeconds": 0.292,
+      "tail": "PASS model-improvement-only architecture: 800 upgraded skills, 210 direct tools, 300 virtual tools, no extra native execution surface\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_multi_engine_provider_reliability.py",
+      "passed": true,
+      "durationSeconds": 0.125,
+      "tail": "PASS 6.2 multi-engine v3 and Arena/ChatGPT/DeepSeek reliability hardening\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_product_manifest_plugin_613.py",
+      "passed": true,
+      "durationSeconds": 0.09,
+      "tail": "PASS canonical manifest, catalogue contracts, plugin diagnostics and no-execution boundary\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_product_release_hardening.py",
+      "passed": true,
+      "durationSeconds": 0.159,
+      "tail": "PASS 6.5 release hardening: rewriting is optional while every skill/tool remains active; all catalogues carry product gates\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_roblox_companion.py",
+      "passed": true,
+      "durationSeconds": 0.259,
+      "tail": "PASS Roblox companion v6.13 diagnostics, bounded typed heartbeat and security boundary\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_roblox_professional_tool_expansion.py",
+      "passed": true,
+      "durationSeconds": 1.838,
+      "tail": "PASS Roblox Studio v3: 24 direct specialists, 90 virtual specialists, 199 upgraded skills, official native execution only\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_skill_packs.py",
+      "passed": true,
+      "durationSeconds": 0.391,
+      "tail": "PASS 100 engine skill packs, filters, recommendations, and detail\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_studio_craft_skills.py",
+      "passed": true,
+      "durationSeconds": 0.109,
+      "tail": "PASS 180 senior studio craft skills across six domains\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_tool_parameter_contracts.py",
+      "passed": true,
+      "durationSeconds": 0.15,
+      "tail": "PASS all 210 tool schemas, every declared parameter, provider coercions, bounds, enums and studio standards\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_unity_launcher.py",
+      "passed": true,
+      "durationSeconds": 0.043,
+      "tail": "PASS Unity launcher pin and override\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_universal_capability_foundation.py",
+      "passed": true,
+      "durationSeconds": 1.427,
+      "tail": "PASS 6.4 universal capability foundation: every tool/skill deepened; six broad genres route to complete product meshes\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_universal_mastery_skills.py",
+      "passed": true,
+      "durationSeconds": 0.068,
+      "tail": "PASS 120 universal mastery skills across six production domains\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_virtual_tool_library.py",
+      "passed": true,
+      "durationSeconds": 15.839,
+      "tail": "PASS 300 virtual tools: every profile runs; matching covers Roblox UI, Unity animation, Godot shaders and Blender characters\n"
+    },
+    {
+      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_adaptive_creative_routing.js",
+      "passed": true,
+      "durationSeconds": 0.051,
+      "tail": "PASS adaptive Auto/direct-engine/Figma/Canvas routing\n"
+    },
+    {
+      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_arena_direct_max_adaptive.js",
+      "passed": true,
+      "durationSeconds": 1.453,
+      "tail": "PASS Arena exact-model Direct Max request per turn with optional untargeted mode\n"
+    },
+    {
+      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_arena_human_verification.js",
+      "passed": true,
+      "durationSeconds": 1.951,
+      "tail": "PASS Arena human-verification gate: visible challenge pauses, manual clear resumes, hidden badge ignored, no bypass logic\n"
+    },
+    {
+      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_arena_roblox_json_protocol.js",
+      "passed": true,
+      "durationSeconds": 0.049,
+      "tail": "PASS Arena Roblox JSON-only protocol: visible command chips, four live command shapes, native markup normalized\n"
+    },
+    {
+      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_arena_starter_profiles_and_engine_free.js",
+      "passed": true,
+      "durationSeconds": 0.051,
+      "tail": "PASS separate Arena model-targeted profiles, optional Direct Max, engine-free studio, and Notion isolation\n"
+    },
+    {
+      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_cross_provider_tool_matrix.js",
+      "passed": true,
+      "durationSeconds": 0.159,
+      "tail": "PASS cross-provider tool matrix: 210 built-ins + 4 namespaced MCP probes across 9 AI websites (7596 command envelopes)\n"
+    },
+    {
+      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_engine_tool_routing.js",
+      "passed": true,
+      "durationSeconds": 0.064,
+      "tail": "PASS exact engine tool routing: unique, collision, server hint and rejection\n"
+    },
+    {
+      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_extension_stress.js",
+      "passed": true,
+      "durationSeconds": 0.182,
+      "tail": "PASS extension stress: 5000 malformed parser cases, 1000 command roundtrips, 9 provider contracts\n"
+    },
+    {
+      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_menu_settings_scope.js",
+      "passed": true,
+      "durationSeconds": 0.044,
+      "tail": "PASS 6.6 all menu settings validated/diagnosed; broad provider+MCP scope; no access-control bypass\n"
+    },
+    {
+      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_notion_always_on.js",
+      "passed": true,
+      "durationSeconds": 1.401,
+      "tail": "PASS Notion always-on: ai/so/com domains, shadow editor, open-chat action, persistent bar and one-click reinjection\n"
+    },
+    {
+      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_notion_bootstrap_once.js",
+      "passed": true,
+      "durationSeconds": 0.047,
+      "tail": "PASS one Notion bootstrap per chat and next-chat profile lifecycle\n"
+    },
+    {
+      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_notion_dom.js",
+      "passed": true,
+      "durationSeconds": 1.521,
+      "tail": "PASS Notion DOM selection, messages, send, lock, self-test, and new-chat identity\n"
+    },
+    {
+      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_notion_model_switching.js",
+      "passed": true,
+      "durationSeconds": 0.061,
+      "tail": "PASS prompt-only real-model requests followed by shared Multi-Script system\n"
+    },
+    {
+      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_notion_profiles.js",
+      "passed": true,
+      "durationSeconds": 0.056,
+      "tail": "PASS Notion Auto starter profiles\n"
+    },
+    {
+      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_notion_prompt_only_routing.js",
+      "passed": true,
+      "durationSeconds": 1.21,
+      "tail": "PASS prompt-only Notion routing: five profiles, zero direct model-picker clicks\n"
+    },
+    {
+      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_portable_settings_and_capability_floor.js",
+      "passed": true,
+      "durationSeconds": 0.05,
+      "tail": "PASS 6.7 validated portable settings and provider-independent professional quality floor\n"
+    },
+    {
+      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_provider_behavior.js",
+      "passed": true,
+      "durationSeconds": 0.057,
+      "tail": "PASS per-provider prompt rewriting, always-on skills and production loop modes\n"
+    },
+    {
+      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_provider_benchmarks.js",
+      "passed": true,
+      "durationSeconds": 0.072,
+      "tail": "PASS seven-provider 1\u201310 benchmark dashboard excluding Arena and Notion\n"
+    },
+    {
+      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_settings_customization.js",
+      "passed": true,
+      "durationSeconds": 0.05,
+      "tail": "PASS customizable settings UI and browser-secret exclusion\n"
+    },
+    {
+      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_skill_tool_mesh_prompt.js",
+      "passed": true,
+      "durationSeconds": 0.048,
+      "tail": "PASS comprehensive skill/tool mesh prompt levels\n"
+    },
+    {
+      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_usage_optimizer.js",
+      "passed": true,
+      "durationSeconds": 0.045,
+      "tail": "PASS provider-wide usage optimizer\n"
+    },
+    {
+      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tools/release_check.py",
+      "passed": true,
+      "durationSeconds": 2.21,
+      "tail": "PASS Multi-Script 6.13.0 release check: 800 skills, 40 JavaScript files, manifest references and public docs verified\n"
+    }
+  ],
+  "summary": {
+    "critical": 0,
+    "high": 0,
+    "recommendations": 3
+  }
+}

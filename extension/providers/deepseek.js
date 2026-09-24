@@ -23,6 +23,12 @@ const ZSProvider = (() => {
   "use strict";
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   let diag = () => {}; // injected by core via init()
+  function deepQueryAll(selector, root = document) {
+    const out = []; const seen = new Set();
+    const walk = (node) => { if (!node || seen.has(node)) return; seen.add(node); try { out.push(...node.querySelectorAll(selector)); node.querySelectorAll("*").forEach((el) => { if (el.shadowRoot) walk(el.shadowRoot); }); } catch {} };
+    walk(root); return out;
+  }
+  const deepQuery = (selector) => deepQueryAll(selector)[0] || null;
 
   // DOM selectors for chat.deepseek.com. Grouped so a future site tweak is a
   // one-liner. DeepSeek ships hashed CSS-module class names (e.g. `d29f3d7d`);
@@ -143,7 +149,7 @@ const ZSProvider = (() => {
   // send hooks and letting them swallow the DeepSeek "Log in" click (which is
   // itself a .ds-button--primary, the same selector as the send button).
   const getEditor = () => {
-    const site = [...document.querySelectorAll(S.editor)].filter(
+    const site = deepQueryAll(S.editor + ", [contenteditable=true][role=textbox]").filter(
       (e) => !e.closest("#zs-root")
     );
     // Prefer the bottom composer over the inline message-EDIT box. When the user
@@ -954,6 +960,7 @@ const ZSProvider = (() => {
   return {
     id: "deepseek",
     displayName: "DeepSeek",
+    providerHardening: "shadow-dom+semantic-composer+reasoning-safe",
     // DYNAMIC: DeepSeek's Instant/Expert models are text-only, but the V4 UI has a
     // dedicated "Vision" model tab. When the user selects Vision we honour it (see
     // enforceComposer) and this getter flips true, so main.js stops blocking
