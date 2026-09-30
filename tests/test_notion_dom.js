@@ -1,6 +1,9 @@
-const { chromium } = require('playwright'); const fs=require('fs'),path=require('path');
+const pw = require('./playwright-env'); const fs=require('fs'),path=require('path');
+const NAME='Notion DOM adapter';
+pw.guard(NAME);
 (async()=>{
- const browser=await chromium.launch({headless:true,executablePath:'/usr/local/bin/chromium',args:['--no-sandbox']});
+ const browser=await pw.launch();
+ if(!browser)pw.skip(NAME,'no Chromium available');
  const page=await browser.newPage();
  await page.setContent(`<!doctype html><style>body{margin:0}main{height:900px}.page-editor,.agent{display:block;width:700px;height:100px}.agent{position:fixed;bottom:0;left:100px;height:300px}.composer{position:absolute;bottom:10px;width:600px;height:60px}</style>
  <main><div class="page-editor" contenteditable="true" role="textbox">ordinary page</div></main>

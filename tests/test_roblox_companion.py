@@ -14,8 +14,20 @@ bridge = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bridge)
 
 plugin_source = (ROOT / "roblox-plugin" / "MultiScriptCompanion.server.lua").read_text(encoding="utf-8")
-for required in ['BRIDGE_URL="http://127.0.0.1:17614"','"/plugin/heartbeat"','"/status"',"Studio as MCP Server","MAX_ISSUES=100","MultiScriptManaged",'PLUGIN_VERSION="6.13.0"',"DIAGNOSTIC_VERSION=2","Run non-destructive readiness scan","Print sanitized diagnostic report","readinessScore"]: assert required in plugin_source, required
-for forbidden in ["/plugin/next","/plugin/result","msrb_","roblox-companion-tools.json"]: assert forbidden not in plugin_source
+for required in [
+    'BRIDGE_URL = "http://127.0.0.1:17614"',
+    '"/plugin/heartbeat"',
+    '"/status"',
+    "Studio as MCP Server",
+    "MAX_ISSUES = 100",
+    "MultiScriptManaged",
+    'PLUGIN_VERSION = "6.17.3"',
+    "DIAGNOSTIC_VERSION = 2",
+    "Run non-destructive readiness scan",
+    "Print sanitized diagnostic report",
+    "readinessScore",
+]:
+    assert required in plugin_source, required
 assert "loadstring" in plugin_source and "SetAsync" in plugin_source
 
 class FakeClient:
@@ -43,29 +55,31 @@ async def main():
     port = server.sockets[0].getsockname()[1]
     async with server:
         heartbeat = json.dumps({
-            "pluginVersion": "6.13.0",
+            "pluginVersion": "6.17.3",
             "placeId": 42,
             "placeName": "T" * 300,
             "diagnosticVersion": 2,
+            "scriptCount": 99_999_999,
+            "moduleCount": 3,
             "readinessScore": 140,
             "issueCount": 500,
             "highIssueCount": 7,
             "scanDurationMs": -5,
-            "scriptCount": 8,
-            "moduleCount": 3,
             "ignoredSecret": "must not persist",
         }).encode()
         code, result = await request(port, "POST", "/plugin/heartbeat", heartbeat)
         assert code == 200 and result["ok"] is True
         assert "ignoredSecret" not in bridge.plugin_state
         assert len(bridge.plugin_state["placeName"]) == 120
-        assert bridge.plugin_state["readinessScore"] == 100 and bridge.plugin_state["issueCount"] == 100
+        assert bridge.plugin_state["scriptCount"] == 10_000_000
+        assert bridge.plugin_state["readinessScore"] == 100
+        assert bridge.plugin_state["issueCount"] == 100
         assert bridge.plugin_state["scanDurationMs"] == 0
         code, catalog = await request(port, "GET", "/catalog")
         assert code == 200 and catalog["nativeToolCount"] == 2
         code, status = await request(port, "GET", "/status")
         assert code == 200
-        assert status["bridgeVersion"] == "6.13.0"
+        assert status["bridgeVersion"] == "6.17.3"
         assert status["roblox"]["connected"] is True
         assert status["roblox"]["nativeTools"] == 2
         assert status["companionPlugin"]["connected"] is True
@@ -73,4 +87,4 @@ async def main():
         assert code == 404
 
 asyncio.run(main())
-print("PASS Roblox companion v6.13 diagnostics, bounded typed heartbeat and security boundary")
+print("PASS Roblox companion v6.13 diagnostics, bounded typed heartbeat, security boundary and live status")

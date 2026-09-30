@@ -1,12 +1,11 @@
-const { chromium } = require('playwright');
+const pw = require('./playwright-env');
 const fs = require('fs');
+const NAME = 'Arena human-verification gate';
+pw.guard(NAME);
 
 (async () => {
-  const browser = await chromium.launch({
-    headless: true,
-    executablePath: '/usr/local/bin/chromium',
-    args: ['--no-sandbox'],
-  });
+  const browser = await pw.launch();
+  if (!browser) pw.skip(NAME, 'no Chromium available');
   const page = await browser.newPage();
   await page.setContent(`<!doctype html>
     <style>*{display:block}.hidden{visibility:hidden}.cf-turnstile{width:300px;height:90px}</style>
@@ -59,7 +58,49 @@ const fs = require('fs');
     throw new Error('human verification guidance missing');
   }
 
-  console.log('PASS Arena human-verification gate: visible challenge pauses, manual clear resumes, hidden badge ignored, no bypass logic');
+  // ── Assisted first-click: ONE trusted click on the provider's OWN widget ──
+  // This is the "keep it running" half of the feature. A checkbox-style
+  // challenge (Turnstile managed / hCaptcha passive) is satisfied by a single
+  // real click, which is exactly what a human does. What must NOT happen is any
+  // token read/write - asserted here behaviourally, not just by source scan.
+  // Re-add a challenge: the resume test above removed the previous one.
+  await page.evaluate(() => {
+    const w = document.createElement('div');
+    w.id = 'challenge';
+    w.className = 'cf-turnstile';
+    w.style.cssText = 'display:block;width:300px;height:90px;position:fixed;left:20px;top:20px';
+    document.body.appendChild(w);
+  });
+  await page.waitForTimeout(50);
+  await page.evaluate(() => {
+    window.__clicks = 0;
+    const w = document.getElementById('challenge');
+    ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach((t) =>
+      w.addEventListener(t, () => { window.__clicks++; }, true));
+  });
+  const targetHit = await page.evaluate(() => {
+    const t = window.__P.challengeClickTarget();
+    return !!t && t.id === 'challenge';
+  });
+  if (!targetHit) throw new Error('the visible challenge must be a valid click target');
+
+  const clickResult = await page.evaluate(() => {
+    window.__clicks = 0;
+    const r = window.__P.assistChallengeClick();
+    return { r, clicks: window.__clicks };
+  });
+  if (!clickResult.r.clicked) throw new Error('assistChallengeClick reported no click: ' + JSON.stringify(clickResult.r));
+  if (clickResult.clicks === 0) throw new Error('assistChallengeClick dispatched no events');
+  // A single gesture, not a machine-gun burst.
+  if (clickResult.clicks > 5) throw new Error('the assisted click must be one bounded gesture, got ' + clickResult.clicks);
+  // An invisible / badge-only challenge must never be clickable.
+  const badgeHit = await page.evaluate(() => {
+    document.getElementById('challenge').remove();
+    return !!window.__P.challengeClickTarget();
+  });
+  if (badgeHit) throw new Error('the hidden v3 badge must never be a click target');
+
+  console.log('PASS Arena human-verification gate: visible challenge pauses, manual clear resumes, hidden badge ignored, assisted click is one bounded gesture on the real widget only, no bypass logic');
   await browser.close();
 })().catch((error) => {
   console.error(error);

@@ -1,6 +1,6 @@
 {
   "product": "Multi-Script",
-  "version": "6.13.0",
+  "version": "6.17.3",
   "catalogue": {
     "skills": 800,
     "directTools": 210,
@@ -18,7 +18,7 @@
     "general"
   ],
   "robloxCompanion": {
-    "version": "6.13.0",
+    "version": "6.17.3",
     "diagnosticOnly": true,
     "allowedEndpoints": [
       "GET /status",
@@ -39,6 +39,17 @@
     "promptRewritingIndependent": true
   },
   "future": {
-    "vscodeExtension": "deferred; reuse bridge and schemas after stability"
+    "vscodeExtension": "deferred; design only after browser extension, bridge, schemas, and plugin remain stable"
+  },
+  "arena": {
+    "defaultProfile": "opus55",
+    "routingCanBeDisabled": true,
+    "disabledBehavior": "normal engine or engine-free startup with no Direct Max starter or per-turn envelope"
+  },
+  "capabilityVisibility": {
+    "directTools": "always included in list_commands and addressable as server multiscript",
+    "skills": "searchable through ms_list_skills/ms_recommend_skills/ms_get_skill",
+    "specialists": "searchable through ms_list_virtual_tools and coordinated by ms_studio_director",
+    "nativeCounts": "reported separately and never presented as total product capability"
   }
 }

@@ -1,5 +1,7 @@
-const { chromium } = require('playwright');
+const pw = require('./playwright-env');
 const fs = require('fs');
+const NAME = 'Notion always-on injection';
+pw.guard(NAME);
 (async()=>{
   const manifest=JSON.parse(fs.readFileSync('extension/manifest.json','utf8'));
   const notion=manifest.content_scripts.find(x=>(x.js||[]).includes('providers/notion.js'));
@@ -7,7 +9,8 @@ const fs = require('fs');
     if(!notion.matches.includes(pattern)||!manifest.host_permissions.includes(pattern)) throw new Error('missing '+pattern);
   }
   if(!manifest.permissions.includes('scripting')||!manifest.permissions.includes('activeTab')) throw new Error('missing repair permissions');
-  const browser=await chromium.launch({headless:true,executablePath:'/usr/local/bin/chromium',args:['--no-sandbox']});
+  const browser=await pw.launch();
+  if(!browser)pw.skip(NAME,'no Chromium available');
   const page=await browser.newPage();
   await page.setContent('<button id="open" aria-label="Open Notion AI">Ask AI</button><div id="shadow-host"></div>');
   await page.evaluate(()=>{

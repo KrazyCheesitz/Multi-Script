@@ -79,7 +79,7 @@ def _enable_ansi_colors():
 HOST = "127.0.0.1"
 # Keep in sync with extension/manifest.json "version" - printed at
 # startup so a user's terminal output alone tells us which build they're on.
-BRIDGE_VERSION = "6.13.0"
+BRIDGE_VERSION = "6.17.3"
 PORT = int(os.environ.get("ZS_BRIDGE_PORT", "17613"))
 PLUGIN_PORT = int(os.environ.get("ZS_PLUGIN_PORT", str(PORT + 1)))
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -2464,11 +2464,25 @@ async def plugin_http_handler(reader, writer):
                 if not isinstance(data, dict):
                     raise ValueError("heartbeat must be an object")
                 def _hb_text(key, limit=120):
-                    value=data.get(key); return str(value)[:limit] if value is not None else None
+                    value = data.get(key)
+                    return str(value)[:limit] if value is not None else None
                 def _hb_int(key, low=0, high=10_000_000):
-                    try: return max(low,min(high,int(data.get(key) or 0)))
-                    except (TypeError,ValueError): return 0
-                allowed={"pluginVersion":_hb_text("pluginVersion",24),"diagnosticVersion":_hb_int("diagnosticVersion",0,1000),"placeId":_hb_int("placeId",0,10**15),"placeName":_hb_text("placeName",120),"isRunning":data.get("isRunning") is True,"selectionCount":_hb_int("selectionCount",0,100_000),"scriptCount":_hb_int("scriptCount"),"moduleCount":_hb_int("moduleCount"),"readinessScore":_hb_int("readinessScore",0,100),"issueCount":_hb_int("issueCount",0,100),"highIssueCount":_hb_int("highIssueCount",0,100),"scanDurationMs":_hb_int("scanDurationMs",0,3_600_000)}
+                    try: return max(low, min(high, int(data.get(key) or 0)))
+                    except (TypeError, ValueError): return 0
+                allowed = {
+                    "pluginVersion": _hb_text("pluginVersion", 24),
+                    "diagnosticVersion": _hb_int("diagnosticVersion", 0, 1000),
+                    "placeId": _hb_int("placeId", 0, 10**15),
+                    "placeName": _hb_text("placeName", 120),
+                    "isRunning": data.get("isRunning") is True,
+                    "selectionCount": _hb_int("selectionCount", 0, 100_000),
+                    "scriptCount": _hb_int("scriptCount", 0, 10_000_000),
+                    "moduleCount": _hb_int("moduleCount", 0, 10_000_000),
+                    "readinessScore": _hb_int("readinessScore", 0, 100),
+                    "issueCount": _hb_int("issueCount", 0, 100),
+                    "highIssueCount": _hb_int("highIssueCount", 0, 100),
+                    "scanDurationMs": _hb_int("scanDurationMs", 0, 3_600_000),
+                }
                 allowed["lastSeen"] = time.time()
                 with plugin_state_lock:
                     plugin_state.clear()

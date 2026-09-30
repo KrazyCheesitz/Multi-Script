@@ -1,5 +1,5 @@
 {
-  "release": "6.13.0",
+  "release": "6.17.3",
   "generatedFrom": "bundled vendor documentation, runtime schemas, exhaustive local regression suites",
   "limitations": [
     "No editor was attached in this sandbox, so engine-mutating smoke tests remain runtime gates on the user machine.",
@@ -2835,25 +2835,19 @@
   },
   "arenaDirectMax": {
     "separateFromNotion": true,
-    "defaultProfile": "directmax",
-    "routing": "prompt-only per turn",
+    "defaultProfile": "opus55",
+    "selectableTargetModels": [
+      "Claude Opus 5.5",
+      "Claude Opus 5",
+      "GPT-5.6 Sol",
+      "Kimi K3",
+      "GPT-6 Luna"
+    ],
+    "routing": "model-targeted prompt-only per turn",
     "capabilitySignals": 8,
     "automaticPicker": false,
     "accessBypass": false,
     "modelGuarantee": false
-  },
-  "arenaRouting": {
-    "defaultProfile": "opus55",
-    "modelTargetedProfiles": [
-      "opus55",
-      "opus5",
-      "gpt56",
-      "kimi3",
-      "luna"
-    ],
-    "untargetedOptional": "directmax",
-    "perTurnRequest": true,
-    "pickerAutomation": false
   },
   "productIntegrity": {
     "canonicalManifest": true,
@@ -2861,5 +2855,20 @@
     "robloxPluginDiagnosticVersion": 2,
     "heartbeatSanitized": true,
     "vscodeExtension": "deferred"
+  },
+  "arenaRouting": {
+    "disabledMode": {
+      "available": true,
+      "startupProfile": false,
+      "perTurnEnvelope": false,
+      "engineStartup": true,
+      "engineFreeStartup": true
+    }
+  },
+  "capabilityVisibility": {
+    "compactIndex": true,
+    "multiScriptPseudoServer": true,
+    "nativeOfflineDirectToolsRemainVisible": true,
+    "allProviders": true
   }
 }

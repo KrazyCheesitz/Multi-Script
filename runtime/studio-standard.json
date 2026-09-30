@@ -262,14 +262,15 @@
     "criticLoop": "three evidence-based rounds",
     "versionDrift": "release-blocking",
     "catalogueDrift": "release-blocking",
-    "pluginBoundary": "diagnostic-only"
+    "pluginBoundary": "diagnostic-only",
+    "futureSurfaces": "reuse the bridge and schema validator; never fork execution semantics"
   },
   "robloxCompanionDiagnostics": [
-    "version compatibility",
-    "official tool count",
-    "bounded heartbeat",
-    "yielding risk scan",
-    "project inventory",
+    "bridge/plugin version compatibility",
+    "official live native-tool count",
+    "bounded sanitized heartbeat",
+    "yielding heuristic risk scan",
+    "project content inventory",
     "selection summary",
     "sanitized Output report",
     "no AI execution surface"

@@ -3,7 +3,7 @@
 from pathlib import Path
 import json, re, subprocess, sys
 ROOT=Path(__file__).resolve().parents[1]
-VERSION="6.13.0"
+VERSION="6.17.3"
 errors=[]
 def need(ok,msg):
     if not ok: errors.append(msg)
@@ -17,12 +17,14 @@ bridge=(ROOT/'runtime/bridge.py').read_text(encoding='utf-8')
 need(f'BRIDGE_VERSION = "{VERSION}"' in bridge,'bridge version mismatch')
 notion=(ROOT/'extension/providers/notion.js').read_text(encoding='utf-8')
 need(f'dataset.zsNotionVer = "{VERSION}"' in notion,'Notion adapter version mismatch')
-required=['README.md','LICENSE','CHANGELOG.md','CONTRIBUTING.md','docs/INSTALL.md','docs/PRIVACY.md','docs/SECURITY.md','docs/SUPPORT.md','docs/THIRD_PARTY_NOTICES.md','docs/RELEASE_CHECKLIST.md','runtime/config.example.json','runtime/studio-standard.json','roblox-plugin/MultiScriptCompanion.server.lua','docs/ROBLOX_PLUGIN.md']
+required=['runtime/product-manifest.json','tools/critic_loop.py','docs/VSCODE_EXTENSION_FUTURE.md','README.md','LICENSE','CHANGELOG.md','CONTRIBUTING.md','docs/INSTALL.md','docs/PRIVACY.md','docs/SECURITY.md','docs/SUPPORT.md','docs/THIRD_PARTY_NOTICES.md','docs/RELEASE_CHECKLIST.md','runtime/config.example.json','runtime/studio-standard.json','roblox-plugin/MultiScriptCompanion.server.lua','docs/ROBLOX_PLUGIN.md']
 for x in required: need((ROOT/x).is_file(),f'missing {x}')
-for x in ['runtime/product-manifest.json','tools/critic_loop.py','docs/VSCODE_EXTENSION_FUTURE.md','docs/RELEASE_NOTES_6.13.0.md']: need((ROOT/x).is_file(),f'missing {x}')
-product=load('runtime/product-manifest.json'); need(product.get('version')==VERSION,'product manifest version mismatch')
-plugin=(ROOT/'roblox-plugin/MultiScriptCompanion.server.lua').read_text(encoding='utf-8'); need(f'PLUGIN_VERSION="{VERSION}"' in plugin,'plugin version mismatch')
-for x in product.get('robloxCompanion',{}).get('forbiddenExecutionSurfaces',[]): need(x not in plugin,f'forbidden plugin surface {x}')
+product=load('runtime/product-manifest.json')
+need(product.get('version')==VERSION,'product manifest version mismatch')
+plugin=(ROOT/'roblox-plugin/MultiScriptCompanion.server.lua').read_text(encoding='utf-8')
+need(f'PLUGIN_VERSION = "{VERSION}"' in plugin,'Roblox plugin version mismatch')
+for forbidden in (product.get('robloxCompanion') or {}).get('forbiddenExecutionSurfaces',[]): need(forbidden not in plugin,f'forbidden Roblox plugin surface: {forbidden}')
+for route in ['/status','/catalog','/plugin/heartbeat']: need(route in plugin,f'missing plugin diagnostic route {route}')
 for x in ['runtime/elevenlabs_audio.py','runtime/configure_elevenlabs.py','runtime/.env.example']: need((ROOT/x).is_file(),f'missing {x}')
 need((ROOT/'docs/MODEL_WATCH.md').is_file(),'missing model watch')
 need((ROOT/'tests/test_notion_prompt_only_routing.js').is_file(),'missing prompt-only routing test')
@@ -38,8 +40,29 @@ need((ROOT/'tests/test_model_improvement_layer.py').is_file(),'missing model-imp
 need((ROOT/'tests/test_full_spectrum_skill_mesh.py').is_file(),'missing full-spectrum skill mesh test')
 need('ms_roblox_capability_audit' in direct_names if 'direct_names' in locals() else True,'missing Roblox capability audit')
 need((ROOT/'tests/test_arena_human_verification.js').is_file(),'missing Arena verification test')
+need((ROOT/'tests/test_roblox_studio_id.js').is_file(),'missing Roblox studio_id contract test')
+need((ROOT/'tests/test_required_param_contract.js').is_file(),'missing required-parameter contract test')
+need((ROOT/'docs/RELEASE_NOTES_6.17.3.md').is_file(),'missing 6.17.3 release notes')
 arena=(ROOT/'extension/providers/arena.js').read_text(encoding='utf-8')
 for x in ['waitForHumanVerification','humanVerificationRequired','does not bypass verification challenges']: need(x in arena,f'missing Arena verification guard: {x}')
+# The assisted first-click is the only interaction with a challenge, and the
+# release must never ship a bypass. Scan the PROVIDER + CORE for the concrete
+# implementations of one (solving services, token fields, execute APIs).
+verify=(ROOT/'extension/core/verification.js')
+need(verify.is_file(),'missing verification assistant module')
+import re as _re
+def _strip_comments(s):
+    s=_re.sub(r'/\*[\s\S]*?\*/',' ',s)
+    s=_re.sub(r'^\s*//.*$',' ',s,flags=_re.M)
+    return s
+_ship=_strip_comments(arena+_strip_comments((ROOT/'extension/core/verification.js').read_text(encoding='utf-8'))+_strip_comments((ROOT/'extension/core/main.js').read_text(encoding='utf-8'))).lower()
+for bad in ['2captcha','anticaptcha','capsolver','capmonster','rucaptcha','deathbycaptcha',
+            'grecaptcha.execute','grecaptcha.getresponse','hcaptcha.execute','turnstile.render(',
+            'g-recaptcha-response','h-captcha-response','cf-turnstile-response','contentwindow.postmessage']:
+    need(bad not in _ship,f'captcha bypass implementation in shipped code: {bad}')
+need('assistChallengeClick' in arena,'missing assisted challenge click')
+need((ROOT/'tests/test_verification_assistant.js').is_file(),'missing verification assistant test')
+need((ROOT/'tests/test_arena_human_verification.js').is_file(),'missing Arena human-verification gate test')
 notion=(ROOT/'extension/providers/notion.js').read_text(encoding='utf-8')
 for x in ['opus55','Claude Opus 5.5','luna','GPT-6 Luna','awaiting-notion',"Notion Auto's best eligible real model",'never imitate ${x.model} through role-play','Never claim ${x.model} was selected unless Notion itself exposes or confirms that selection','directPickerInteraction: false']: need(x in notion,f'missing Notion model starter guard: {x}')
 for section in manifest.get('content_scripts',[]):
