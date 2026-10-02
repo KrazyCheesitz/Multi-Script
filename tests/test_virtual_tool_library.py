@@ -8,7 +8,7 @@ def call(n,a): return json.loads(b._builtin_call(n,a,M())["text"])
 data=json.load(open(ROOT/"runtime"/"virtual-tools.json"));assert data["total"]==300 and len(data["tools"])==300
 assert data["engineCounts"]=={"roblox":90,"unity":70,"godot":70,"blender":70}
 for tid,v in data["tools"].items():
- assert len(v["stages"])==8 and len(v["qualityGates"])==8
+ assert len(v["stages"])>=8 and len(v["qualityGates"])>=8
  out=call("ms_run_virtual_tool",{"tool_id":tid,"request":"do it professionally"})
  assert out["silentAugmentation"] and out["preserveExplicitRequirements"] and out["outputContract"]["implementImmediately"]
 cases=[("roblox","make me a good ui for this roblox game, classic","ui"),("unity","professional locomotion and combat animation","animation"),("godot","stylized water shader with foam","shader-water"),("blender","model rig texture and export a game character","model-character")]

@@ -1,14 +1,14 @@
 {
   "product": "Multi-Script",
-  "version": "6.17.3",
+  "version": "6.24.0",
   "catalogue": {
     "skills": 800,
-    "directTools": 210,
+    "directTools": 230,
     "virtualSpecialists": 300,
     "robloxSkills": 199,
     "robloxVirtualSpecialists": 90
   },
-  "providers": 9,
+  "providers": 10,
   "engines": [
     "roblox",
     "unity",
@@ -18,19 +18,34 @@
     "general"
   ],
   "robloxCompanion": {
-    "version": "6.17.3",
-    "diagnosticOnly": true,
+    "version": "6.24.0",
+    "diagnosticOnly": false,
+    "companionTools": 24,
+    "defaultPermission": "off",
+    "permissionTiers": {
+      "read": 7,
+      "project": 16,
+      "full": 24
+    },
     "allowedEndpoints": [
       "GET /status",
       "GET /catalog",
-      "POST /plugin/heartbeat"
+      "POST /plugin/heartbeat",
+      "POST /plugin/register",
+      "GET /plugin/next",
+      "POST /plugin/result",
+      "POST /plugin/unregister"
     ],
-    "forbiddenExecutionSurfaces": [
-      "/plugin/next",
-      "/plugin/result",
-      "msrb_",
-      "roblox-companion-tools.json"
-    ]
+    "security": {
+      "loopbackOnly": true,
+      "explicitOptIn": true,
+      "inMemoryBearerToken": true,
+      "noHttpEnqueue": true,
+      "allowlistedHandlersOnly": true,
+      "arbitraryCodeEvaluation": false,
+      "boundedQueue": 32,
+      "jobTimeoutSeconds": 180
+    }
   },
   "quality": {
     "criticRoundsMaximum": 3,
@@ -51,5 +66,22 @@
     "skills": "searchable through ms_list_skills/ms_recommend_skills/ms_get_skill",
     "specialists": "searchable through ms_list_virtual_tools and coordinated by ms_studio_director",
     "nativeCounts": "reported separately and never presented as total product capability"
+  },
+  "directTools": 230,
+  "engineToolkit": {
+    "tools": {
+      "blender": 30,
+      "roblox": 27,
+      "unity": 31,
+      "godot": 21
+    },
+    "total": 109,
+    "transport": "translated onto each engine's own MCP server (Roblox execute_luau, Blender/Unity MCP) or file-native (Godot project files)",
+    "visibleWhen": "only for engines with a configured MCP server"
+  },
+  "terminal": {
+    "startsBridgeFrom": "chat-bar terminal icon via Chrome Native Messaging",
+    "oneTimeSetup": "Setup.bat / MacOS_Setup.command",
+    "startBat": "removed"
   }
 }

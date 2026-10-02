@@ -20,6 +20,7 @@
 # ──────────────────────────────────────────────────────────────────────────
 import asyncio
 import concurrent.futures
+import hashlib
 import html
 import json
 import math
@@ -27,10 +28,14 @@ import random
 import os
 import re
 import queue
+import secrets
 import subprocess
 import sys
 import threading
 import time
+import uuid
+from collections import deque
+from urllib.parse import urlsplit
 
 try:
     # Sibling script (same folder as bridge.py, which Python puts on sys.path
@@ -39,6 +44,75 @@ try:
     import launch_studio_mcp as _studio_scan
 except Exception:
     _studio_scan = None
+
+try:
+    # Sibling module: stages a photo/video the user handed us and turns it into
+    # clipboard-pasteable payloads, so a chat surface with no upload control can
+    # still receive the media. Optional at import time only in the sense that a
+    # failure here must not stop the bridge from serving engine tools - but a
+    # silent None would make the media routes 503 with no explanation, so the
+    # except records why.
+    #
+    # bridge.py is normally launched with runtime/ as the working directory, in
+    # which case the sibling imports by name. It is ALSO loaded directly by path
+    # (tests, tooling), where the cwd is the repo root and the sibling is not on
+    # sys.path. Adding our own directory makes the import positional-independent
+    # rather than relying on the launcher's cwd.
+    import os as _os_boot
+    _here_boot = _os_boot.path.dirname(_os_boot.path.abspath(__file__))
+    if _here_boot not in sys.path:
+        sys.path.insert(0, _here_boot)
+    import media_relay as _media
+    MEDIA_RELAY = _media.RELAY
+    MEDIA_RELAY_ERROR = None
+except Exception as _media_exc:  # pragma: no cover - import-time only
+    _media = None
+    MEDIA_RELAY = None
+    MEDIA_RELAY_ERROR = "%s: %s" % (type(_media_exc).__name__, _media_exc)
+
+try:
+    # Sibling module: enumerates the desktop apps and windows on this machine so
+    # the agent can see what the user has open. Uses only stdlib (ctypes) plus OS
+    # binaries, so a missing optional package degrades the DETAIL reported, never
+    # the ability to answer at all. Same positional-independence note as above:
+    # the _here_boot insert already put runtime/ on sys.path.
+    import desktop_vision as _desktop
+    DESKTOP_VISION = _desktop
+    DESKTOP_VISION_ERROR = None
+except Exception as _desktop_exc:  # pragma: no cover - import-time only
+    _desktop = None
+    DESKTOP_VISION = None
+    DESKTOP_VISION_ERROR = "%s: %s" % (type(_desktop_exc).__name__, _desktop_exc)
+
+try:
+    # Sibling module: the primitive-choice layer. Answers "what is this feature
+    # actually made of" so a modelled part is not defaulted to a scaled sphere.
+    # Pure data and pure logic with no dependencies, so this import cannot fail
+    # for environmental reasons - only a genuinely broken file would land here.
+    import form_craft as _form
+    FORM_CRAFT = _form
+    FORM_CRAFT_ERROR = None
+except Exception as _form_exc:  # pragma: no cover - import-time only
+    _form = None
+    FORM_CRAFT = None
+    FORM_CRAFT_ERROR = "%s: %s" % (type(_form_exc).__name__, _form_exc)
+
+try:
+    # Sibling module: self-healing tool-argument repair (see schema_repair.py).
+    import schema_repair as _repair
+    SCHEMA_REPAIR_ERROR = None
+except Exception as _repair_exc:  # pragma: no cover - import-time only
+    _repair = None
+    SCHEMA_REPAIR_ERROR = "%s: %s" % (type(_repair_exc).__name__, _repair_exc)
+
+try:
+    # Sibling modules: typed native tools for Blender / Roblox / Unity / Godot.
+    import engine_toolkit as _TOOLKIT
+    _TOOLKIT.ensure_loaded()
+    TOOLKIT_ERROR = None
+except Exception as _toolkit_exc:  # pragma: no cover - import-time only
+    _TOOLKIT = None
+    TOOLKIT_ERROR = "%s: %s" % (type(_toolkit_exc).__name__, _toolkit_exc)
 
 try:
     import websockets
@@ -79,11 +153,19 @@ def _enable_ansi_colors():
 HOST = "127.0.0.1"
 # Keep in sync with extension/manifest.json "version" - printed at
 # startup so a user's terminal output alone tells us which build they're on.
-BRIDGE_VERSION = "6.17.3"
+BRIDGE_VERSION = "6.24.0"
 PORT = int(os.environ.get("ZS_BRIDGE_PORT", "17613"))
 PLUGIN_PORT = int(os.environ.get("ZS_PLUGIN_PORT", str(PORT + 1)))
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
+COMPANION_TOOLS_PATH = os.path.join(HERE, "roblox-plugin-tools.json")
+try:
+    with open(COMPANION_TOOLS_PATH, "r", encoding="utf-8") as _f:
+        COMPANION_TOOLS = json.load(_f).get("tools", [])
+except Exception:
+    COMPANION_TOOLS = []
+COMPANION_TOOL_BY_NAME = {t.get("name"): t for t in COMPANION_TOOLS if t.get("name")}
+COMPANION_TOOL_NAMES = set(COMPANION_TOOL_BY_NAME)
 
 # The primary server. It is always present, added by the installer, and can
 # never be edited/removed through the extension (it is what Multi-Script is FOR).
@@ -177,6 +259,68 @@ def _clear_spinner_line():
         print("\r\033[K", end="", flush=True)
 
 
+# ── Live log ring buffer (the in-extension terminal) ──────────────────────────
+# The chat bar's terminal panel shows what the bridge is actually doing, so the
+# bridge has to keep its recent output somewhere addressable - the console text
+# is not readable from the extension, and the log FILE is only ever written.
+#
+# Deliberately bounded: a long-running bridge must not grow this without limit,
+# so it is a deque with a hard cap. Each entry carries a monotonic `seq` so the
+# panel can ask for "everything after N" and never miss or duplicate a line even
+# if two polls land close together.
+LOG_RING_MAX = 600
+_log_ring = deque(maxlen=LOG_RING_MAX)
+_log_seq = 0          # last assigned sequence number
+_log_lock = threading.Lock()
+# When this process came up. Recorded here (not at import time of some other
+# module) so the uptime the terminal panel reports is this run's, and survives
+# an in-process restart_self() because the module is re-executed fresh.
+_started_at = time.time()
+
+# Terminal colour name -> a level the panel can style. Anything unmapped is
+# "info", which is the right default: it is shown plainly rather than hidden.
+_LOG_LEVELS = {
+    "rd": "error", "red": "error", "err": "error",
+    "yl": "warn", "yellow": "warn", "warn": "warn",
+    "gr": "ok", "green": "ok", "gn": "ok", "ok": "ok",
+    "cy": "info", "cyan": "info", "bl": "info", "blue": "info",
+    "dim": "muted", "gray": "muted", "grey": "muted",
+}
+
+
+def log_record(msg, color="dim"):
+    """Append one line to the ring. Returns the record, so callers that also want
+    to push it to live subscribers can. Never raises."""
+    global _log_seq
+    try:
+        with _log_lock:
+            _log_seq += 1
+            rec = {
+                "seq": _log_seq,
+                "t": time.strftime("%H:%M:%S"),
+                "level": _LOG_LEVELS.get(str(color).lower(), "info"),
+                "msg": str(msg),
+            }
+            _log_ring.append(rec)
+            return rec
+    except Exception:
+        return None
+
+
+def log_since(since=0, limit=400):
+    """Records with seq > `since`, capped. Also returns the newest seq so the
+    caller can advance its cursor even when it is handed fewer lines than exist
+    (an old cursor far behind a rotated buffer must not re-request forever)."""
+    try:
+        s = int(since or 0)
+    except Exception:
+        s = 0
+    with _log_lock:
+        newest = _log_seq
+        out = [r for r in _log_ring if r["seq"] > s]
+    return out[-max(1, min(int(limit or 400), LOG_RING_MAX)):], newest
+
+
 def log(msg, color="dim", terminal=True):
     """terminal=False: written to bridge_debug.log only, not the console. Use
     for noisy/technical detail (raw stderr from child MCP servers, per-call
@@ -192,6 +336,108 @@ def log(msg, color="dim", terminal=True):
             _log_file.flush()
         except Exception:
             pass
+    # The ring is fed from here regardless of `terminal`, because the panel
+    # replaces the console for most users: a line written to the file but not
+    # the console would otherwise be invisible in the very UI that exists to
+    # show it. (terminal=False was about console noise, not about hiding data.)
+    rec = log_record(msg, color)
+    if rec is not None:
+        _publish_log(rec)
+
+
+# Sockets that asked to follow the log live. Held weakly-keyed by id so a closed
+# connection cannot pin memory; _publish_log prunes as it goes.
+_log_subs = {}
+_log_subs_lock = threading.Lock()
+
+
+def _publish_log(rec):
+    """Hand a new record to every subscribed socket. Never raises, never blocks:
+    a slow/closed client must not stall the caller, so this only does a
+    best-effort put on each subscription's own queue."""
+    if not _log_subs:
+        return
+    try:
+        with _log_subs_lock:
+            subs = list(_log_subs.values())
+        for q in subs:
+            try:
+                q.put_nowait(rec)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _subscribe_log(ws, q):
+    """Register `q` as a live log sink for this socket. Returns an unsubscribe
+    callable. Keyed by id(ws) so a dropped connection leaves nothing behind."""
+    key = id(ws)
+    with _log_subs_lock:
+        _log_subs[key] = q
+
+    def _unsub():
+        with _log_subs_lock:
+            _log_subs.pop(key, None)
+
+    return _unsub
+
+
+async def _log_pump(ws, q):
+    """Forward queued log records to one socket, batched.
+
+    Batched on purpose: a burst (an engine handshake emits dozens of lines at
+    once) would otherwise be one WS frame per line. We drain whatever is already
+    queued into a single frame, which keeps the panel responsive and the socket
+    quiet. Stops quietly when the socket goes away - the handler's finally owns
+    subscription cleanup, so this never needs to touch it.
+    """
+    loop = asyncio.get_running_loop()
+    try:
+        while True:
+            first = await loop.run_in_executor(None, q.get)
+            batch = [first]
+            # Drain without waiting, up to a sane frame size.
+            while len(batch) < 120:
+                try:
+                    batch.append(q.get_nowait())
+                except queue.Empty:
+                    break
+            await ws.send(json.dumps({"type": "bridge_log_push", "lines": batch}))
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        # ConnectionClosed or anything else: the panel will simply reconnect and
+        # re-request the backlog by seq, so there is nothing to repair here.
+        return
+
+
+def _service_snapshot():
+    """A compact, honest picture of what the bridge is serving right now - the
+    header of the terminal panel. Reports only what we can actually observe; an
+    unknown is null, never a guess dressed up as a fact."""
+    try:
+        health = mgr.health()
+    except Exception:
+        health = []
+    try:
+        servers_line = [
+            {"id": h.get("id"), "alive": bool(h.get("alive")), "tools": h.get("tools")}
+            for h in health
+        ]
+    except Exception:
+        servers_line = []
+    return {
+        "bridgeVersion": BRIDGE_VERSION,
+        "port": PORT,
+        "uptimeSeconds": round(time.time() - _started_at, 1) if _started_at else None,
+        "clients": len(clients),
+        "logFile": os.path.basename(_log_file.name) if _log_file else None,
+        "servers": servers_line,
+        "ringSize": len(_log_ring),
+        "ringMax": LOG_RING_MAX,
+    }
+
 
 
 def action_banner(lines):
@@ -449,7 +695,7 @@ def _reclaim_bridge_port():
     """Free OUR OWN listen port (17613) from a leftover bridge before we bind.
 
     The common failure (reported live, WinError 10048 on bind): the user
-    relaunches start.bat while an earlier bridge.py is still running - window
+    relaunches the bridge while an earlier bridge.py is still running - window
     closed with the X instead of Ctrl+C, a previous crash that left a detached
     python, or a double double-click. The old process still holds the port, so
     websockets.serve() dies on bind with a cryptic (localised) OSError and the
@@ -797,10 +1043,10 @@ ADVANCED_DIRECT_CONTRACTS = {'ms_camera_system_design': {'description': 'Design 
 ADVANCED_DIRECT_CONTRACTS.update({'ms_dialogue_production': {'description': 'Dialogue production: branching dialogue, conditions, localization, VO hooks and runtime validation.', 'stages': ['Define dialogue production goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for branching dialogue, conditions, localization, VO hooks and runtime validation', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_cinematic_production': {'description': 'Cinematic production: storyboards, cameras, animation, timing, audio, skip/replay and runtime capture.', 'stages': ['Define cinematic production goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for storyboards, cameras, animation, timing, audio, skip/replay and runtime capture', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_tutorial_design': {'description': 'Tutorial design: onboarding, progressive disclosure, practice, recovery, telemetry and accessibility.', 'stages': ['Define tutorial design goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for onboarding, progressive disclosure, practice, recovery, telemetry and accessibility', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_navigation_system_design': {'description': 'Navigation system design: navigation meshes, agents, links, avoidance, streaming and recovery.', 'stages': ['Define navigation system design goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for navigation meshes, agents, links, avoidance, streaming and recovery', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_physics_system_audit': {'description': 'Physics system audit: collision layers, fixed-step behavior, ownership, determinism and profiling.', 'stages': ['Define physics system audit goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for collision layers, fixed-step behavior, ownership, determinism and profiling', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_vehicle_system_design': {'description': 'Vehicle system design: handling, suspension, controls, camera, networking, damage and tuning.', 'stages': ['Define vehicle system design goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for handling, suspension, controls, camera, networking, damage and tuning', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_world_streaming_plan': {'description': 'World streaming plan: partitioning, loading, persistence, seams, budgets and failure recovery.', 'stages': ['Define world streaming plan goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for partitioning, loading, persistence, seams, budgets and failure recovery', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_level_design_review': {'description': 'Level design review: metrics, flow, pacing, landmarks, encounters, accessibility and playtests.', 'stages': ['Define level design review goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for metrics, flow, pacing, landmarks, encounters, accessibility and playtests', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_puzzle_design': {'description': 'Puzzle design: rules, teaching, feedback, hinting, reset, exploits and difficulty progression.', 'stages': ['Define puzzle design goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for rules, teaching, feedback, hinting, reset, exploits and difficulty progression', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_social_system_design': {'description': 'Social system design: parties, friends, presence, invites, privacy, moderation and safety.', 'stages': ['Define social system design goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for parties, friends, presence, invites, privacy, moderation and safety', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_matchmaking_design': {'description': 'Matchmaking design: queues, skill, latency, parties, backfill, abuse prevention and telemetry.', 'stages': ['Define matchmaking design goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for queues, skill, latency, parties, backfill, abuse prevention and telemetry', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_modding_pipeline': {'description': 'Modding pipeline: sandboxing, schemas, packaging, validation, compatibility and moderation.', 'stages': ['Define modding pipeline goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for sandboxing, schemas, packaging, validation, compatibility and moderation', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_build_automation': {'description': 'Build automation: reproducible builds, versioning, tests, signing, artifacts and rollback.', 'stages': ['Define build automation goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for reproducible builds, versioning, tests, signing, artifacts and rollback', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_crash_diagnostics': {'description': 'Crash diagnostics: symbols, dumps, breadcrumbs, reproduction, grouping and fix verification.', 'stages': ['Define crash diagnostics goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for symbols, dumps, breadcrumbs, reproduction, grouping and fix verification', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_memory_leak_audit': {'description': 'Memory leak audit: allocation baselines, lifecycle ownership, retention paths and soak testing.', 'stages': ['Define memory leak audit goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for allocation baselines, lifecycle ownership, retention paths and soak testing', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_network_bandwidth_audit': {'description': 'Network bandwidth audit: message inventory, payloads, rates, compression, interest and loss tests.', 'stages': ['Define network bandwidth audit goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for message inventory, payloads, rates, compression, interest and loss tests', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_mobile_optimization': {'description': 'Mobile optimization: thermal, memory, GPU, input, UI, battery and device-tier validation.', 'stages': ['Define mobile optimization goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for thermal, memory, GPU, input, UI, battery and device-tier validation', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_vr_xr_production': {'description': 'VR/XR production: comfort, interaction, locomotion, scale, performance and accessibility.', 'stages': ['Define vr/xr production goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for comfort, interaction, locomotion, scale, performance and accessibility', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_web_build_optimization': {'description': 'Web build optimization: download size, startup, memory, browser compatibility and caching.', 'stages': ['Define web build optimization goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for download size, startup, memory, browser compatibility and caching', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_console_readiness': {'description': 'Console readiness: platform input, suspend/resume, users, saves, certification and performance.', 'stages': ['Define console readiness goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for platform input, suspend/resume, users, saves, certification and performance', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_controller_haptics': {'description': 'Controller haptics: event taxonomy, envelopes, device capabilities, comfort and testing.', 'stages': ['Define controller haptics goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for event taxonomy, envelopes, device capabilities, comfort and testing', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_iconography_production': {'description': 'Iconography production: visual language, grids, states, readability, localization and export.', 'stages': ['Define iconography production goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for visual language, grids, states, readability, localization and export', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_marketing_capture_plan': {'description': 'Marketing capture plan: shot list, builds, camera paths, clean UI, formats and approvals.', 'stages': ['Define marketing capture plan goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for shot list, builds, camera paths, clean UI, formats and approvals', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_npc_population_system': {'description': 'NPC population system: spawning, schedules, simulation LOD, persistence and performance.', 'stages': ['Define npc population system goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for spawning, schedules, simulation LOD, persistence and performance', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_weather_system': {'description': 'Weather system: state model, visuals, gameplay, audio, transitions, replication and budgets.', 'stages': ['Define weather system goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for state model, visuals, gameplay, audio, transitions, replication and budgets', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_day_night_system': {'description': 'Day/night system: time authority, lighting, schedules, saves, networking and transitions.', 'stages': ['Define day/night system goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for time authority, lighting, schedules, saves, networking and transitions', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_destructible_system': {'description': 'Destructible system: fracture states, authority, damage, debris, persistence and optimization.', 'stages': ['Define destructible system goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for fracture states, authority, damage, debris, persistence and optimization', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_replay_system': {'description': 'Replay system: capture schema, determinism, seek, versioning, storage and playback validation.', 'stages': ['Define replay system goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for capture schema, determinism, seek, versioning, storage and playback validation', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}, 'ms_photo_mode': {'description': 'Photo mode: camera controls, pause policy, filters, UI, platform saves and privacy.', 'stages': ['Define photo mode goals and measurable acceptance criteria', 'Inspect current project architecture, content and constraints', 'Design the data model, ownership and lifecycle for camera controls, pause policy, filters, UI, platform saves and privacy', 'Implement the smallest complete vertical path in the target engine', 'Integrate UI, input, audio, VFX and persistence where relevant', 'Handle failure, interruption, migration and multiplayer edge cases', 'Profile target-platform performance and add observability', 'Run focused tests, read back state and capture verification evidence'], 'qualityGates': ['The requested result exists in the real target project', 'Authority and ownership are explicit and secure', 'Happy, edge, failure and interruption paths are covered', 'Configuration is data-driven and documented', 'Accessibility and all target inputs are considered', 'Performance is measured against an explicit budget', 'Automated or repeatable tests pass with clean logs', 'Final state is read back and supported by concrete evidence']}})
 
 
-STUDIO_DIRECT_CONTRACTS = {'ms_roblox_animation_studio': {'description': 'Roblox animation studio with a senior ten-year-studio craft bar.', 'category': 'animation', 'stages': ['Establish reference, emotional intent and gameplay readability', 'Inspect rig hierarchy, scale, constraints and existing clips', 'Block unmistakable key poses, silhouettes and contact points', 'Refine timing, spacing, arcs, weight, overlap and anticipation', 'Build loops, transitions, layers, masks, IK and interruption rules', 'Synchronize gameplay events, hit windows, VFX and audio cues', 'Integrate compression, retargeting, networking and runtime budgets', 'Review in gameplay camera at multiple speeds and fix every visible defect'], 'qualityGates': ['Strong poses read without context', 'Weight, balance and contacts remain believable', 'Timing supports gameplay rather than delaying it', 'Transitions have no pops, foot slides or dead frames', 'Loops preserve phase and root-motion policy', 'Events align with visible action frames', 'Retargeted/runtime output matches source intent', 'Engine capture and state-machine tests pass']}, 'ms_blender_animation_studio': {'description': 'Blender animation studio with a senior ten-year-studio craft bar.', 'category': 'animation', 'stages': ['Establish reference, emotional intent and gameplay readability', 'Inspect rig hierarchy, scale, constraints and existing clips', 'Block unmistakable key poses, silhouettes and contact points', 'Refine timing, spacing, arcs, weight, overlap and anticipation', 'Build loops, transitions, layers, masks, IK and interruption rules', 'Synchronize gameplay events, hit windows, VFX and audio cues', 'Integrate compression, retargeting, networking and runtime budgets', 'Review in gameplay camera at multiple speeds and fix every visible defect'], 'qualityGates': ['Strong poses read without context', 'Weight, balance and contacts remain believable', 'Timing supports gameplay rather than delaying it', 'Transitions have no pops, foot slides or dead frames', 'Loops preserve phase and root-motion policy', 'Events align with visible action frames', 'Retargeted/runtime output matches source intent', 'Engine capture and state-machine tests pass']}, 'ms_unity_animation_studio': {'description': 'Unity animation studio with a senior ten-year-studio craft bar.', 'category': 'animation', 'stages': ['Establish reference, emotional intent and gameplay readability', 'Inspect rig hierarchy, scale, constraints and existing clips', 'Block unmistakable key poses, silhouettes and contact points', 'Refine timing, spacing, arcs, weight, overlap and anticipation', 'Build loops, transitions, layers, masks, IK and interruption rules', 'Synchronize gameplay events, hit windows, VFX and audio cues', 'Integrate compression, retargeting, networking and runtime budgets', 'Review in gameplay camera at multiple speeds and fix every visible defect'], 'qualityGates': ['Strong poses read without context', 'Weight, balance and contacts remain believable', 'Timing supports gameplay rather than delaying it', 'Transitions have no pops, foot slides or dead frames', 'Loops preserve phase and root-motion policy', 'Events align with visible action frames', 'Retargeted/runtime output matches source intent', 'Engine capture and state-machine tests pass']}, 'ms_godot_animation_studio': {'description': 'Godot animation studio with a senior ten-year-studio craft bar.', 'category': 'animation', 'stages': ['Establish reference, emotional intent and gameplay readability', 'Inspect rig hierarchy, scale, constraints and existing clips', 'Block unmistakable key poses, silhouettes and contact points', 'Refine timing, spacing, arcs, weight, overlap and anticipation', 'Build loops, transitions, layers, masks, IK and interruption rules', 'Synchronize gameplay events, hit windows, VFX and audio cues', 'Integrate compression, retargeting, networking and runtime budgets', 'Review in gameplay camera at multiple speeds and fix every visible defect'], 'qualityGates': ['Strong poses read without context', 'Weight, balance and contacts remain believable', 'Timing supports gameplay rather than delaying it', 'Transitions have no pops, foot slides or dead frames', 'Loops preserve phase and root-motion policy', 'Events align with visible action frames', 'Retargeted/runtime output matches source intent', 'Engine capture and state-machine tests pass']}, 'ms_combat_animation_polish': {'description': 'Combat animation polish with a senior ten-year-studio craft bar.', 'category': 'animation', 'stages': ['Establish reference, emotional intent and gameplay readability', 'Inspect rig hierarchy, scale, constraints and existing clips', 'Block unmistakable key poses, silhouettes and contact points', 'Refine timing, spacing, arcs, weight, overlap and anticipation', 'Build loops, transitions, layers, masks, IK and interruption rules', 'Synchronize gameplay events, hit windows, VFX and audio cues', 'Integrate compression, retargeting, networking and runtime budgets', 'Review in gameplay camera at multiple speeds and fix every visible defect'], 'qualityGates': ['Strong poses read without context', 'Weight, balance and contacts remain believable', 'Timing supports gameplay rather than delaying it', 'Transitions have no pops, foot slides or dead frames', 'Loops preserve phase and root-motion policy', 'Events align with visible action frames', 'Retargeted/runtime output matches source intent', 'Engine capture and state-machine tests pass']}, 'ms_locomotion_animation_polish': {'description': 'Locomotion animation polish with a senior ten-year-studio craft bar.', 'category': 'animation', 'stages': ['Establish reference, emotional intent and gameplay readability', 'Inspect rig hierarchy, scale, constraints and existing clips', 'Block unmistakable key poses, silhouettes and contact points', 'Refine timing, spacing, arcs, weight, overlap and anticipation', 'Build loops, transitions, layers, masks, IK and interruption rules', 'Synchronize gameplay events, hit windows, VFX and audio cues', 'Integrate compression, retargeting, networking and runtime budgets', 'Review in gameplay camera at multiple speeds and fix every visible defect'], 'qualityGates': ['Strong poses read without context', 'Weight, balance and contacts remain believable', 'Timing supports gameplay rather than delaying it', 'Transitions have no pops, foot slides or dead frames', 'Loops preserve phase and root-motion policy', 'Events align with visible action frames', 'Retargeted/runtime output matches source intent', 'Engine capture and state-machine tests pass']}, 'ms_cinematic_animation_polish': {'description': 'Cinematic animation polish with a senior ten-year-studio craft bar.', 'category': 'animation', 'stages': ['Establish reference, emotional intent and gameplay readability', 'Inspect rig hierarchy, scale, constraints and existing clips', 'Block unmistakable key poses, silhouettes and contact points', 'Refine timing, spacing, arcs, weight, overlap and anticipation', 'Build loops, transitions, layers, masks, IK and interruption rules', 'Synchronize gameplay events, hit windows, VFX and audio cues', 'Integrate compression, retargeting, networking and runtime budgets', 'Review in gameplay camera at multiple speeds and fix every visible defect'], 'qualityGates': ['Strong poses read without context', 'Weight, balance and contacts remain believable', 'Timing supports gameplay rather than delaying it', 'Transitions have no pops, foot slides or dead frames', 'Loops preserve phase and root-motion policy', 'Events align with visible action frames', 'Retargeted/runtime output matches source intent', 'Engine capture and state-machine tests pass']}, 'ms_creature_animation': {'description': 'Creature animation with a senior ten-year-studio craft bar.', 'category': 'animation', 'stages': ['Establish reference, emotional intent and gameplay readability', 'Inspect rig hierarchy, scale, constraints and existing clips', 'Block unmistakable key poses, silhouettes and contact points', 'Refine timing, spacing, arcs, weight, overlap and anticipation', 'Build loops, transitions, layers, masks, IK and interruption rules', 'Synchronize gameplay events, hit windows, VFX and audio cues', 'Integrate compression, retargeting, networking and runtime budgets', 'Review in gameplay camera at multiple speeds and fix every visible defect'], 'qualityGates': ['Strong poses read without context', 'Weight, balance and contacts remain believable', 'Timing supports gameplay rather than delaying it', 'Transitions have no pops, foot slides or dead frames', 'Loops preserve phase and root-motion policy', 'Events align with visible action frames', 'Retargeted/runtime output matches source intent', 'Engine capture and state-machine tests pass']}, 'ms_facial_animation': {'description': 'Facial animation with a senior ten-year-studio craft bar.', 'category': 'animation', 'stages': ['Establish reference, emotional intent and gameplay readability', 'Inspect rig hierarchy, scale, constraints and existing clips', 'Block unmistakable key poses, silhouettes and contact points', 'Refine timing, spacing, arcs, weight, overlap and anticipation', 'Build loops, transitions, layers, masks, IK and interruption rules', 'Synchronize gameplay events, hit windows, VFX and audio cues', 'Integrate compression, retargeting, networking and runtime budgets', 'Review in gameplay camera at multiple speeds and fix every visible defect'], 'qualityGates': ['Strong poses read without context', 'Weight, balance and contacts remain believable', 'Timing supports gameplay rather than delaying it', 'Transitions have no pops, foot slides or dead frames', 'Loops preserve phase and root-motion policy', 'Events align with visible action frames', 'Retargeted/runtime output matches source intent', 'Engine capture and state-machine tests pass']}, 'ms_animation_retargeting': {'description': 'Animation retargeting with a senior ten-year-studio craft bar.', 'category': 'animation', 'stages': ['Establish reference, emotional intent and gameplay readability', 'Inspect rig hierarchy, scale, constraints and existing clips', 'Block unmistakable key poses, silhouettes and contact points', 'Refine timing, spacing, arcs, weight, overlap and anticipation', 'Build loops, transitions, layers, masks, IK and interruption rules', 'Synchronize gameplay events, hit windows, VFX and audio cues', 'Integrate compression, retargeting, networking and runtime budgets', 'Review in gameplay camera at multiple speeds and fix every visible defect'], 'qualityGates': ['Strong poses read without context', 'Weight, balance and contacts remain believable', 'Timing supports gameplay rather than delaying it', 'Transitions have no pops, foot slides or dead frames', 'Loops preserve phase and root-motion policy', 'Events align with visible action frames', 'Retargeted/runtime output matches source intent', 'Engine capture and state-machine tests pass']}, 'ms_animation_state_machine': {'description': 'Animation state-machine direction with a senior ten-year-studio craft bar.', 'category': 'animation', 'stages': ['Establish reference, emotional intent and gameplay readability', 'Inspect rig hierarchy, scale, constraints and existing clips', 'Block unmistakable key poses, silhouettes and contact points', 'Refine timing, spacing, arcs, weight, overlap and anticipation', 'Build loops, transitions, layers, masks, IK and interruption rules', 'Synchronize gameplay events, hit windows, VFX and audio cues', 'Integrate compression, retargeting, networking and runtime budgets', 'Review in gameplay camera at multiple speeds and fix every visible defect'], 'qualityGates': ['Strong poses read without context', 'Weight, balance and contacts remain believable', 'Timing supports gameplay rather than delaying it', 'Transitions have no pops, foot slides or dead frames', 'Loops preserve phase and root-motion policy', 'Events align with visible action frames', 'Retargeted/runtime output matches source intent', 'Engine capture and state-machine tests pass']}, 'ms_animation_runtime_qa': {'description': 'Animation runtime QA with a senior ten-year-studio craft bar.', 'category': 'animation', 'stages': ['Establish reference, emotional intent and gameplay readability', 'Inspect rig hierarchy, scale, constraints and existing clips', 'Block unmistakable key poses, silhouettes and contact points', 'Refine timing, spacing, arcs, weight, overlap and anticipation', 'Build loops, transitions, layers, masks, IK and interruption rules', 'Synchronize gameplay events, hit windows, VFX and audio cues', 'Integrate compression, retargeting, networking and runtime budgets', 'Review in gameplay camera at multiple speeds and fix every visible defect'], 'qualityGates': ['Strong poses read without context', 'Weight, balance and contacts remain believable', 'Timing supports gameplay rather than delaying it', 'Transitions have no pops, foot slides or dead frames', 'Loops preserve phase and root-motion policy', 'Events align with visible action frames', 'Retargeted/runtime output matches source intent', 'Engine capture and state-machine tests pass']}, 'ms_gui_design_studio': {'description': 'Professional GUI design studio with a senior ten-year-studio craft bar.', 'category': 'uiux', 'stages': ['Clarify the user goal, primary path and decision hierarchy', 'Inspect current design language, constraints and target inputs', 'Define tokens for type, color, spacing, radius, depth and motion', 'Build reusable components with complete interaction states', 'Compose responsive layouts for aspect ratios and localization', 'Add controller, keyboard, touch and accessibility behavior', 'Implement tasteful motion, feedback, loading and error recovery', 'Test the real flow with screenshots, navigation and usability evidence'], 'qualityGates': ['Hierarchy makes the primary action obvious', 'Components are reusable and internally consistent', 'Every state is intentional and visually finished', 'Layouts survive small screens and long localized text', 'Focus order and controller navigation have no dead ends', 'Contrast, type scale and target sizes are accessible', 'Motion feels responsive and supports reduced-motion settings', 'Final in-engine flow is functional and beautiful']}, 'ms_roblox_gui_studio': {'description': 'Roblox GUI production studio with a senior ten-year-studio craft bar.', 'category': 'uiux', 'stages': ['Clarify the user goal, primary path and decision hierarchy', 'Inspect current design language, constraints and target inputs', 'Define tokens for type, color, spacing, radius, depth and motion', 'Build reusable components with complete interaction states', 'Compose responsive layouts for aspect ratios and localization', 'Add controller, keyboard, touch and accessibility behavior', 'Implement tasteful motion, feedback, loading and error recovery', 'Test the real flow with screenshots, navigation and usability evidence'], 'qualityGates': ['Hierarchy makes the primary action obvious', 'Components are reusable and internally consistent', 'Every state is intentional and visually finished', 'Layouts survive small screens and long localized text', 'Focus order and controller navigation have no dead ends', 'Contrast, type scale and target sizes are accessible', 'Motion feels responsive and supports reduced-motion settings', 'Final in-engine flow is functional and beautiful']}, 'ms_unity_ui_studio': {'description': 'Unity UI production studio with a senior ten-year-studio craft bar.', 'category': 'uiux', 'stages': ['Clarify the user goal, primary path and decision hierarchy', 'Inspect current design language, constraints and target inputs', 'Define tokens for type, color, spacing, radius, depth and motion', 'Build reusable components with complete interaction states', 'Compose responsive layouts for aspect ratios and localization', 'Add controller, keyboard, touch and accessibility behavior', 'Implement tasteful motion, feedback, loading and error recovery', 'Test the real flow with screenshots, navigation and usability evidence'], 'qualityGates': ['Hierarchy makes the primary action obvious', 'Components are reusable and internally consistent', 'Every state is intentional and visually finished', 'Layouts survive small screens and long localized text', 'Focus order and controller navigation have no dead ends', 'Contrast, type scale and target sizes are accessible', 'Motion feels responsive and supports reduced-motion settings', 'Final in-engine flow is functional and beautiful']}, 'ms_godot_ui_studio': {'description': 'Godot UI production studio with a senior ten-year-studio craft bar.', 'category': 'uiux', 'stages': ['Clarify the user goal, primary path and decision hierarchy', 'Inspect current design language, constraints and target inputs', 'Define tokens for type, color, spacing, radius, depth and motion', 'Build reusable components with complete interaction states', 'Compose responsive layouts for aspect ratios and localization', 'Add controller, keyboard, touch and accessibility behavior', 'Implement tasteful motion, feedback, loading and error recovery', 'Test the real flow with screenshots, navigation and usability evidence'], 'qualityGates': ['Hierarchy makes the primary action obvious', 'Components are reusable and internally consistent', 'Every state is intentional and visually finished', 'Layouts survive small screens and long localized text', 'Focus order and controller navigation have no dead ends', 'Contrast, type scale and target sizes are accessible', 'Motion feels responsive and supports reduced-motion settings', 'Final in-engine flow is functional and beautiful']}, 'ms_ui_motion_design': {'description': 'UI motion and micro-interaction design with a senior ten-year-studio craft bar.', 'category': 'uiux', 'stages': ['Clarify the user goal, primary path and decision hierarchy', 'Inspect current design language, constraints and target inputs', 'Define tokens for type, color, spacing, radius, depth and motion', 'Build reusable components with complete interaction states', 'Compose responsive layouts for aspect ratios and localization', 'Add controller, keyboard, touch and accessibility behavior', 'Implement tasteful motion, feedback, loading and error recovery', 'Test the real flow with screenshots, navigation and usability evidence'], 'qualityGates': ['Hierarchy makes the primary action obvious', 'Components are reusable and internally consistent', 'Every state is intentional and visually finished', 'Layouts survive small screens and long localized text', 'Focus order and controller navigation have no dead ends', 'Contrast, type scale and target sizes are accessible', 'Motion feels responsive and supports reduced-motion settings', 'Final in-engine flow is functional and beautiful']}, 'ms_design_system_production': {'description': 'Design-system production with a senior ten-year-studio craft bar.', 'category': 'uiux', 'stages': ['Clarify the user goal, primary path and decision hierarchy', 'Inspect current design language, constraints and target inputs', 'Define tokens for type, color, spacing, radius, depth and motion', 'Build reusable components with complete interaction states', 'Compose responsive layouts for aspect ratios and localization', 'Add controller, keyboard, touch and accessibility behavior', 'Implement tasteful motion, feedback, loading and error recovery', 'Test the real flow with screenshots, navigation and usability evidence'], 'qualityGates': ['Hierarchy makes the primary action obvious', 'Components are reusable and internally consistent', 'Every state is intentional and visually finished', 'Layouts survive small screens and long localized text', 'Focus order and controller navigation have no dead ends', 'Contrast, type scale and target sizes are accessible', 'Motion feels responsive and supports reduced-motion settings', 'Final in-engine flow is functional and beautiful']}, 'ms_responsive_interface_polish': {'description': 'Responsive interface polish with a senior ten-year-studio craft bar.', 'category': 'uiux', 'stages': ['Clarify the user goal, primary path and decision hierarchy', 'Inspect current design language, constraints and target inputs', 'Define tokens for type, color, spacing, radius, depth and motion', 'Build reusable components with complete interaction states', 'Compose responsive layouts for aspect ratios and localization', 'Add controller, keyboard, touch and accessibility behavior', 'Implement tasteful motion, feedback, loading and error recovery', 'Test the real flow with screenshots, navigation and usability evidence'], 'qualityGates': ['Hierarchy makes the primary action obvious', 'Components are reusable and internally consistent', 'Every state is intentional and visually finished', 'Layouts survive small screens and long localized text', 'Focus order and controller navigation have no dead ends', 'Contrast, type scale and target sizes are accessible', 'Motion feels responsive and supports reduced-motion settings', 'Final in-engine flow is functional and beautiful']}, 'ms_controller_navigation_ux': {'description': 'Controller-navigation UX with a senior ten-year-studio craft bar.', 'category': 'uiux', 'stages': ['Clarify the user goal, primary path and decision hierarchy', 'Inspect current design language, constraints and target inputs', 'Define tokens for type, color, spacing, radius, depth and motion', 'Build reusable components with complete interaction states', 'Compose responsive layouts for aspect ratios and localization', 'Add controller, keyboard, touch and accessibility behavior', 'Implement tasteful motion, feedback, loading and error recovery', 'Test the real flow with screenshots, navigation and usability evidence'], 'qualityGates': ['Hierarchy makes the primary action obvious', 'Components are reusable and internally consistent', 'Every state is intentional and visually finished', 'Layouts survive small screens and long localized text', 'Focus order and controller navigation have no dead ends', 'Contrast, type scale and target sizes are accessible', 'Motion feels responsive and supports reduced-motion settings', 'Final in-engine flow is functional and beautiful']}, 'ms_accessible_interface_polish': {'description': 'Accessible interface polish with a senior ten-year-studio craft bar.', 'category': 'uiux', 'stages': ['Clarify the user goal, primary path and decision hierarchy', 'Inspect current design language, constraints and target inputs', 'Define tokens for type, color, spacing, radius, depth and motion', 'Build reusable components with complete interaction states', 'Compose responsive layouts for aspect ratios and localization', 'Add controller, keyboard, touch and accessibility behavior', 'Implement tasteful motion, feedback, loading and error recovery', 'Test the real flow with screenshots, navigation and usability evidence'], 'qualityGates': ['Hierarchy makes the primary action obvious', 'Components are reusable and internally consistent', 'Every state is intentional and visually finished', 'Layouts survive small screens and long localized text', 'Focus order and controller navigation have no dead ends', 'Contrast, type scale and target sizes are accessible', 'Motion feels responsive and supports reduced-motion settings', 'Final in-engine flow is functional and beautiful']}, 'ms_usability_polish': {'description': 'Usability and flow polish with a senior ten-year-studio craft bar.', 'category': 'uiux', 'stages': ['Clarify the user goal, primary path and decision hierarchy', 'Inspect current design language, constraints and target inputs', 'Define tokens for type, color, spacing, radius, depth and motion', 'Build reusable components with complete interaction states', 'Compose responsive layouts for aspect ratios and localization', 'Add controller, keyboard, touch and accessibility behavior', 'Implement tasteful motion, feedback, loading and error recovery', 'Test the real flow with screenshots, navigation and usability evidence'], 'qualityGates': ['Hierarchy makes the primary action obvious', 'Components are reusable and internally consistent', 'Every state is intentional and visually finished', 'Layouts survive small screens and long localized text', 'Focus order and controller navigation have no dead ends', 'Contrast, type scale and target sizes are accessible', 'Motion feels responsive and supports reduced-motion settings', 'Final in-engine flow is functional and beautiful']}, 'ms_blender_model_studio': {'description': 'Blender model studio with a senior ten-year-studio craft bar.', 'category': 'art3d', 'stages': ['Define art direction, references, scale and gameplay silhouette', 'Inspect target engine metrics, camera distance and asset budget', 'Block primary forms, proportion, composition and value structure', 'Refine topology, deformation, UVs, pivots and modular boundaries', 'Author coherent materials, textures and controlled detail hierarchy', 'Create lighting and presentation that supports the intended mood', 'Export and integrate correct scale, axes, collisions, LODs and shaders', 'Validate from gameplay view and optimize without losing the art target'], 'qualityGates': ['Silhouette and focal hierarchy read at gameplay distance', 'Topology, normals and UVs are technically clean', 'Material response is coherent under representative lighting', 'Detail density supports—not fights—the focal point', 'Scale, pivot, collision and orientation import correctly', 'LODs and compression preserve quality within budget', 'Asset matches the surrounding project art language', 'Final engine capture meets the reference bar']}, 'ms_stylized_art_production': {'description': 'Stylized art production with a senior ten-year-studio craft bar.', 'category': 'art3d', 'stages': ['Define art direction, references, scale and gameplay silhouette', 'Inspect target engine metrics, camera distance and asset budget', 'Block primary forms, proportion, composition and value structure', 'Refine topology, deformation, UVs, pivots and modular boundaries', 'Author coherent materials, textures and controlled detail hierarchy', 'Create lighting and presentation that supports the intended mood', 'Export and integrate correct scale, axes, collisions, LODs and shaders', 'Validate from gameplay view and optimize without losing the art target'], 'qualityGates': ['Silhouette and focal hierarchy read at gameplay distance', 'Topology, normals and UVs are technically clean', 'Material response is coherent under representative lighting', 'Detail density supports—not fights—the focal point', 'Scale, pivot, collision and orientation import correctly', 'LODs and compression preserve quality within budget', 'Asset matches the surrounding project art language', 'Final engine capture meets the reference bar']}, 'ms_realistic_art_production': {'description': 'Realistic art production with a senior ten-year-studio craft bar.', 'category': 'art3d', 'stages': ['Define art direction, references, scale and gameplay silhouette', 'Inspect target engine metrics, camera distance and asset budget', 'Block primary forms, proportion, composition and value structure', 'Refine topology, deformation, UVs, pivots and modular boundaries', 'Author coherent materials, textures and controlled detail hierarchy', 'Create lighting and presentation that supports the intended mood', 'Export and integrate correct scale, axes, collisions, LODs and shaders', 'Validate from gameplay view and optimize without losing the art target'], 'qualityGates': ['Silhouette and focal hierarchy read at gameplay distance', 'Topology, normals and UVs are technically clean', 'Material response is coherent under representative lighting', 'Detail density supports—not fights—the focal point', 'Scale, pivot, collision and orientation import correctly', 'LODs and compression preserve quality within budget', 'Asset matches the surrounding project art language', 'Final engine capture meets the reference bar']}, 'ms_environment_art_studio': {'description': 'Environment art studio with a senior ten-year-studio craft bar.', 'category': 'art3d', 'stages': ['Define art direction, references, scale and gameplay silhouette', 'Inspect target engine metrics, camera distance and asset budget', 'Block primary forms, proportion, composition and value structure', 'Refine topology, deformation, UVs, pivots and modular boundaries', 'Author coherent materials, textures and controlled detail hierarchy', 'Create lighting and presentation that supports the intended mood', 'Export and integrate correct scale, axes, collisions, LODs and shaders', 'Validate from gameplay view and optimize without losing the art target'], 'qualityGates': ['Silhouette and focal hierarchy read at gameplay distance', 'Topology, normals and UVs are technically clean', 'Material response is coherent under representative lighting', 'Detail density supports—not fights—the focal point', 'Scale, pivot, collision and orientation import correctly', 'LODs and compression preserve quality within budget', 'Asset matches the surrounding project art language', 'Final engine capture meets the reference bar']}, 'ms_character_art_studio': {'description': 'Character art studio with a senior ten-year-studio craft bar.', 'category': 'art3d', 'stages': ['Define art direction, references, scale and gameplay silhouette', 'Inspect target engine metrics, camera distance and asset budget', 'Block primary forms, proportion, composition and value structure', 'Refine topology, deformation, UVs, pivots and modular boundaries', 'Author coherent materials, textures and controlled detail hierarchy', 'Create lighting and presentation that supports the intended mood', 'Export and integrate correct scale, axes, collisions, LODs and shaders', 'Validate from gameplay view and optimize without losing the art target'], 'qualityGates': ['Silhouette and focal hierarchy read at gameplay distance', 'Topology, normals and UVs are technically clean', 'Material response is coherent under representative lighting', 'Detail density supports—not fights—the focal point', 'Scale, pivot, collision and orientation import correctly', 'LODs and compression preserve quality within budget', 'Asset matches the surrounding project art language', 'Final engine capture meets the reference bar']}, 'ms_prop_art_studio': {'description': 'Prop art studio with a senior ten-year-studio craft bar.', 'category': 'art3d', 'stages': ['Define art direction, references, scale and gameplay silhouette', 'Inspect target engine metrics, camera distance and asset budget', 'Block primary forms, proportion, composition and value structure', 'Refine topology, deformation, UVs, pivots and modular boundaries', 'Author coherent materials, textures and controlled detail hierarchy', 'Create lighting and presentation that supports the intended mood', 'Export and integrate correct scale, axes, collisions, LODs and shaders', 'Validate from gameplay view and optimize without losing the art target'], 'qualityGates': ['Silhouette and focal hierarchy read at gameplay distance', 'Topology, normals and UVs are technically clean', 'Material response is coherent under representative lighting', 'Detail density supports—not fights—the focal point', 'Scale, pivot, collision and orientation import correctly', 'LODs and compression preserve quality within budget', 'Asset matches the surrounding project art language', 'Final engine capture meets the reference bar']}, 'ms_pbr_material_studio': {'description': 'PBR material studio with a senior ten-year-studio craft bar.', 'category': 'art3d', 'stages': ['Define art direction, references, scale and gameplay silhouette', 'Inspect target engine metrics, camera distance and asset budget', 'Block primary forms, proportion, composition and value structure', 'Refine topology, deformation, UVs, pivots and modular boundaries', 'Author coherent materials, textures and controlled detail hierarchy', 'Create lighting and presentation that supports the intended mood', 'Export and integrate correct scale, axes, collisions, LODs and shaders', 'Validate from gameplay view and optimize without losing the art target'], 'qualityGates': ['Silhouette and focal hierarchy read at gameplay distance', 'Topology, normals and UVs are technically clean', 'Material response is coherent under representative lighting', 'Detail density supports—not fights—the focal point', 'Scale, pivot, collision and orientation import correctly', 'LODs and compression preserve quality within budget', 'Asset matches the surrounding project art language', 'Final engine capture meets the reference bar']}, 'ms_texture_detail_polish': {'description': 'Texture detail polish with a senior ten-year-studio craft bar.', 'category': 'art3d', 'stages': ['Define art direction, references, scale and gameplay silhouette', 'Inspect target engine metrics, camera distance and asset budget', 'Block primary forms, proportion, composition and value structure', 'Refine topology, deformation, UVs, pivots and modular boundaries', 'Author coherent materials, textures and controlled detail hierarchy', 'Create lighting and presentation that supports the intended mood', 'Export and integrate correct scale, axes, collisions, LODs and shaders', 'Validate from gameplay view and optimize without losing the art target'], 'qualityGates': ['Silhouette and focal hierarchy read at gameplay distance', 'Topology, normals and UVs are technically clean', 'Material response is coherent under representative lighting', 'Detail density supports—not fights—the focal point', 'Scale, pivot, collision and orientation import correctly', 'LODs and compression preserve quality within budget', 'Asset matches the surrounding project art language', 'Final engine capture meets the reference bar']}, 'ms_lighting_art_studio': {'description': 'Lighting art studio with a senior ten-year-studio craft bar.', 'category': 'art3d', 'stages': ['Define art direction, references, scale and gameplay silhouette', 'Inspect target engine metrics, camera distance and asset budget', 'Block primary forms, proportion, composition and value structure', 'Refine topology, deformation, UVs, pivots and modular boundaries', 'Author coherent materials, textures and controlled detail hierarchy', 'Create lighting and presentation that supports the intended mood', 'Export and integrate correct scale, axes, collisions, LODs and shaders', 'Validate from gameplay view and optimize without losing the art target'], 'qualityGates': ['Silhouette and focal hierarchy read at gameplay distance', 'Topology, normals and UVs are technically clean', 'Material response is coherent under representative lighting', 'Detail density supports—not fights—the focal point', 'Scale, pivot, collision and orientation import correctly', 'LODs and compression preserve quality within budget', 'Asset matches the surrounding project art language', 'Final engine capture meets the reference bar']}, 'ms_composition_render_polish': {'description': 'Composition and render polish with a senior ten-year-studio craft bar.', 'category': 'art3d', 'stages': ['Define art direction, references, scale and gameplay silhouette', 'Inspect target engine metrics, camera distance and asset budget', 'Block primary forms, proportion, composition and value structure', 'Refine topology, deformation, UVs, pivots and modular boundaries', 'Author coherent materials, textures and controlled detail hierarchy', 'Create lighting and presentation that supports the intended mood', 'Export and integrate correct scale, axes, collisions, LODs and shaders', 'Validate from gameplay view and optimize without losing the art target'], 'qualityGates': ['Silhouette and focal hierarchy read at gameplay distance', 'Topology, normals and UVs are technically clean', 'Material response is coherent under representative lighting', 'Detail density supports—not fights—the focal point', 'Scale, pivot, collision and orientation import correctly', 'LODs and compression preserve quality within budget', 'Asset matches the surrounding project art language', 'Final engine capture meets the reference bar']}, 'ms_game_feel_director': {'description': 'Game-feel director with a senior ten-year-studio craft bar.', 'category': 'gameplay', 'stages': ['Define the player fantasy and the exact feeling to create', 'Inspect existing controls, camera, animation, feedback and metrics', 'Set measurable response, timing, acceleration and clarity targets', 'Implement the smallest complete interactive loop in the real engine', 'Layer animation, VFX, audio, haptics and camera feedback with restraint', 'Handle cancellation, failure, latency, accessibility and edge states', 'Tune with repeatable scenarios and player-facing telemetry', 'Play-test, compare against targets and iterate until the feel is cohesive'], 'qualityGates': ['Input-to-feedback latency feels immediate', 'Rules and outcomes are legible without explanation', 'Feedback is layered but never noisy', 'Difficulty and timing are fair across target inputs', 'Systems remain secure and deterministic where needed', 'Edge and interruption states recover gracefully', 'Performance remains stable under representative load', 'Play-test evidence supports the final tuning']}, 'ms_combat_feel_director': {'description': 'Combat-feel director with a senior ten-year-studio craft bar.', 'category': 'gameplay', 'stages': ['Define the player fantasy and the exact feeling to create', 'Inspect existing controls, camera, animation, feedback and metrics', 'Set measurable response, timing, acceleration and clarity targets', 'Implement the smallest complete interactive loop in the real engine', 'Layer animation, VFX, audio, haptics and camera feedback with restraint', 'Handle cancellation, failure, latency, accessibility and edge states', 'Tune with repeatable scenarios and player-facing telemetry', 'Play-test, compare against targets and iterate until the feel is cohesive'], 'qualityGates': ['Input-to-feedback latency feels immediate', 'Rules and outcomes are legible without explanation', 'Feedback is layered but never noisy', 'Difficulty and timing are fair across target inputs', 'Systems remain secure and deterministic where needed', 'Edge and interruption states recover gracefully', 'Performance remains stable under representative load', 'Play-test evidence supports the final tuning']}, 'ms_movement_feel_director': {'description': 'Movement-feel director with a senior ten-year-studio craft bar.', 'category': 'gameplay', 'stages': ['Define the player fantasy and the exact feeling to create', 'Inspect existing controls, camera, animation, feedback and metrics', 'Set measurable response, timing, acceleration and clarity targets', 'Implement the smallest complete interactive loop in the real engine', 'Layer animation, VFX, audio, haptics and camera feedback with restraint', 'Handle cancellation, failure, latency, accessibility and edge states', 'Tune with repeatable scenarios and player-facing telemetry', 'Play-test, compare against targets and iterate until the feel is cohesive'], 'qualityGates': ['Input-to-feedback latency feels immediate', 'Rules and outcomes are legible without explanation', 'Feedback is layered but never noisy', 'Difficulty and timing are fair across target inputs', 'Systems remain secure and deterministic where needed', 'Edge and interruption states recover gracefully', 'Performance remains stable under representative load', 'Play-test evidence supports the final tuning']}, 'ms_camera_feel_director': {'description': 'Camera-feel director with a senior ten-year-studio craft bar.', 'category': 'gameplay', 'stages': ['Define the player fantasy and the exact feeling to create', 'Inspect existing controls, camera, animation, feedback and metrics', 'Set measurable response, timing, acceleration and clarity targets', 'Implement the smallest complete interactive loop in the real engine', 'Layer animation, VFX, audio, haptics and camera feedback with restraint', 'Handle cancellation, failure, latency, accessibility and edge states', 'Tune with repeatable scenarios and player-facing telemetry', 'Play-test, compare against targets and iterate until the feel is cohesive'], 'qualityGates': ['Input-to-feedback latency feels immediate', 'Rules and outcomes are legible without explanation', 'Feedback is layered but never noisy', 'Difficulty and timing are fair across target inputs', 'Systems remain secure and deterministic where needed', 'Edge and interruption states recover gracefully', 'Performance remains stable under representative load', 'Play-test evidence supports the final tuning']}, 'ms_onboarding_experience_polish': {'description': 'Onboarding experience polish with a senior ten-year-studio craft bar.', 'category': 'gameplay', 'stages': ['Define the player fantasy and the exact feeling to create', 'Inspect existing controls, camera, animation, feedback and metrics', 'Set measurable response, timing, acceleration and clarity targets', 'Implement the smallest complete interactive loop in the real engine', 'Layer animation, VFX, audio, haptics and camera feedback with restraint', 'Handle cancellation, failure, latency, accessibility and edge states', 'Tune with repeatable scenarios and player-facing telemetry', 'Play-test, compare against targets and iterate until the feel is cohesive'], 'qualityGates': ['Input-to-feedback latency feels immediate', 'Rules and outcomes are legible without explanation', 'Feedback is layered but never noisy', 'Difficulty and timing are fair across target inputs', 'Systems remain secure and deterministic where needed', 'Edge and interruption states recover gracefully', 'Performance remains stable under representative load', 'Play-test evidence supports the final tuning']}, 'ms_economy_experience_polish': {'description': 'Economy experience polish with a senior ten-year-studio craft bar.', 'category': 'gameplay', 'stages': ['Define the player fantasy and the exact feeling to create', 'Inspect existing controls, camera, animation, feedback and metrics', 'Set measurable response, timing, acceleration and clarity targets', 'Implement the smallest complete interactive loop in the real engine', 'Layer animation, VFX, audio, haptics and camera feedback with restraint', 'Handle cancellation, failure, latency, accessibility and edge states', 'Tune with repeatable scenarios and player-facing telemetry', 'Play-test, compare against targets and iterate until the feel is cohesive'], 'qualityGates': ['Input-to-feedback latency feels immediate', 'Rules and outcomes are legible without explanation', 'Feedback is layered but never noisy', 'Difficulty and timing are fair across target inputs', 'Systems remain secure and deterministic where needed', 'Edge and interruption states recover gracefully', 'Performance remains stable under representative load', 'Play-test evidence supports the final tuning']}, 'ms_social_experience_polish': {'description': 'Social experience polish with a senior ten-year-studio craft bar.', 'category': 'gameplay', 'stages': ['Define the player fantasy and the exact feeling to create', 'Inspect existing controls, camera, animation, feedback and metrics', 'Set measurable response, timing, acceleration and clarity targets', 'Implement the smallest complete interactive loop in the real engine', 'Layer animation, VFX, audio, haptics and camera feedback with restraint', 'Handle cancellation, failure, latency, accessibility and edge states', 'Tune with repeatable scenarios and player-facing telemetry', 'Play-test, compare against targets and iterate until the feel is cohesive'], 'qualityGates': ['Input-to-feedback latency feels immediate', 'Rules and outcomes are legible without explanation', 'Feedback is layered but never noisy', 'Difficulty and timing are fair across target inputs', 'Systems remain secure and deterministic where needed', 'Edge and interruption states recover gracefully', 'Performance remains stable under representative load', 'Play-test evidence supports the final tuning']}, 'ms_progression_experience_polish': {'description': 'Progression experience polish with a senior ten-year-studio craft bar.', 'category': 'gameplay', 'stages': ['Define the player fantasy and the exact feeling to create', 'Inspect existing controls, camera, animation, feedback and metrics', 'Set measurable response, timing, acceleration and clarity targets', 'Implement the smallest complete interactive loop in the real engine', 'Layer animation, VFX, audio, haptics and camera feedback with restraint', 'Handle cancellation, failure, latency, accessibility and edge states', 'Tune with repeatable scenarios and player-facing telemetry', 'Play-test, compare against targets and iterate until the feel is cohesive'], 'qualityGates': ['Input-to-feedback latency feels immediate', 'Rules and outcomes are legible without explanation', 'Feedback is layered but never noisy', 'Difficulty and timing are fair across target inputs', 'Systems remain secure and deterministic where needed', 'Edge and interruption states recover gracefully', 'Performance remains stable under representative load', 'Play-test evidence supports the final tuning']}, 'ms_studio_critic_loop': {'description': 'Studio-grade critic loop with a senior ten-year-studio craft bar.', 'category': 'quality', 'stages': ['Restate the user-visible acceptance criteria and quality target', 'Inspect the real artifact, project state and current evidence', 'Evaluate craft, usability, correctness, cohesion and technical risk', 'Find the highest-impact defects instead of listing cosmetic trivia', 'Fix blocking and high-value issues in the actual target project', 'Retest happy, edge, failure, accessibility and performance paths', 'Compare before/after evidence against the requested outcome', 'Approve only when evidence is concrete; otherwise return precise revisions'], 'qualityGates': ['No plan or generated text is mistaken for the deliverable', 'The requested artifact exists and works end to end', 'Visual and interaction quality is coherent', 'Known edge states are handled honestly', 'Logs and focused tests are clean', 'Performance meets an explicit target-tier budget', 'Final state is read back from the engine', 'Remaining limitations are disclosed rather than hidden']}, 'ms_visual_quality_audit': {'description': 'Visual quality audit with a senior ten-year-studio craft bar.', 'category': 'quality', 'stages': ['Restate the user-visible acceptance criteria and quality target', 'Inspect the real artifact, project state and current evidence', 'Evaluate craft, usability, correctness, cohesion and technical risk', 'Find the highest-impact defects instead of listing cosmetic trivia', 'Fix blocking and high-value issues in the actual target project', 'Retest happy, edge, failure, accessibility and performance paths', 'Compare before/after evidence against the requested outcome', 'Approve only when evidence is concrete; otherwise return precise revisions'], 'qualityGates': ['No plan or generated text is mistaken for the deliverable', 'The requested artifact exists and works end to end', 'Visual and interaction quality is coherent', 'Known edge states are handled honestly', 'Logs and focused tests are clean', 'Performance meets an explicit target-tier budget', 'Final state is read back from the engine', 'Remaining limitations are disclosed rather than hidden']}, 'ms_ui_quality_audit': {'description': 'UI quality audit with a senior ten-year-studio craft bar.', 'category': 'quality', 'stages': ['Restate the user-visible acceptance criteria and quality target', 'Inspect the real artifact, project state and current evidence', 'Evaluate craft, usability, correctness, cohesion and technical risk', 'Find the highest-impact defects instead of listing cosmetic trivia', 'Fix blocking and high-value issues in the actual target project', 'Retest happy, edge, failure, accessibility and performance paths', 'Compare before/after evidence against the requested outcome', 'Approve only when evidence is concrete; otherwise return precise revisions'], 'qualityGates': ['No plan or generated text is mistaken for the deliverable', 'The requested artifact exists and works end to end', 'Visual and interaction quality is coherent', 'Known edge states are handled honestly', 'Logs and focused tests are clean', 'Performance meets an explicit target-tier budget', 'Final state is read back from the engine', 'Remaining limitations are disclosed rather than hidden']}, 'ms_gameplay_quality_audit': {'description': 'Gameplay quality audit with a senior ten-year-studio craft bar.', 'category': 'quality', 'stages': ['Restate the user-visible acceptance criteria and quality target', 'Inspect the real artifact, project state and current evidence', 'Evaluate craft, usability, correctness, cohesion and technical risk', 'Find the highest-impact defects instead of listing cosmetic trivia', 'Fix blocking and high-value issues in the actual target project', 'Retest happy, edge, failure, accessibility and performance paths', 'Compare before/after evidence against the requested outcome', 'Approve only when evidence is concrete; otherwise return precise revisions'], 'qualityGates': ['No plan or generated text is mistaken for the deliverable', 'The requested artifact exists and works end to end', 'Visual and interaction quality is coherent', 'Known edge states are handled honestly', 'Logs and focused tests are clean', 'Performance meets an explicit target-tier budget', 'Final state is read back from the engine', 'Remaining limitations are disclosed rather than hidden']}, 'ms_performance_quality_audit': {'description': 'Performance quality audit with a senior ten-year-studio craft bar.', 'category': 'quality', 'stages': ['Restate the user-visible acceptance criteria and quality target', 'Inspect the real artifact, project state and current evidence', 'Evaluate craft, usability, correctness, cohesion and technical risk', 'Find the highest-impact defects instead of listing cosmetic trivia', 'Fix blocking and high-value issues in the actual target project', 'Retest happy, edge, failure, accessibility and performance paths', 'Compare before/after evidence against the requested outcome', 'Approve only when evidence is concrete; otherwise return precise revisions'], 'qualityGates': ['No plan or generated text is mistaken for the deliverable', 'The requested artifact exists and works end to end', 'Visual and interaction quality is coherent', 'Known edge states are handled honestly', 'Logs and focused tests are clean', 'Performance meets an explicit target-tier budget', 'Final state is read back from the engine', 'Remaining limitations are disclosed rather than hidden']}, 'ms_cross_engine_integration_audit': {'description': 'Cross-engine integration audit with a senior ten-year-studio craft bar.', 'category': 'quality', 'stages': ['Restate the user-visible acceptance criteria and quality target', 'Inspect the real artifact, project state and current evidence', 'Evaluate craft, usability, correctness, cohesion and technical risk', 'Find the highest-impact defects instead of listing cosmetic trivia', 'Fix blocking and high-value issues in the actual target project', 'Retest happy, edge, failure, accessibility and performance paths', 'Compare before/after evidence against the requested outcome', 'Approve only when evidence is concrete; otherwise return precise revisions'], 'qualityGates': ['No plan or generated text is mistaken for the deliverable', 'The requested artifact exists and works end to end', 'Visual and interaction quality is coherent', 'Known edge states are handled honestly', 'Logs and focused tests are clean', 'Performance meets an explicit target-tier budget', 'Final state is read back from the engine', 'Remaining limitations are disclosed rather than hidden']}, 'ms_release_quality_bar': {'description': 'Release quality bar with a senior ten-year-studio craft bar.', 'category': 'quality', 'stages': ['Restate the user-visible acceptance criteria and quality target', 'Inspect the real artifact, project state and current evidence', 'Evaluate craft, usability, correctness, cohesion and technical risk', 'Find the highest-impact defects instead of listing cosmetic trivia', 'Fix blocking and high-value issues in the actual target project', 'Retest happy, edge, failure, accessibility and performance paths', 'Compare before/after evidence against the requested outcome', 'Approve only when evidence is concrete; otherwise return precise revisions'], 'qualityGates': ['No plan or generated text is mistaken for the deliverable', 'The requested artifact exists and works end to end', 'Visual and interaction quality is coherent', 'Known edge states are handled honestly', 'Logs and focused tests are clean', 'Performance meets an explicit target-tier budget', 'Final state is read back from the engine', 'Remaining limitations are disclosed rather than hidden']}}
+STUDIO_DIRECT_CONTRACTS = {'ms_roblox_animation_studio': {'description': 'Roblox animation studio with a senior ten-year-studio craft bar.', 'category': 'animation', 'stages': ['Establish reference, emotional intent and gameplay readability', 'Inspect rig hierarchy, scale, constraints and existing clips', 'Block unmistakable key poses, silhouettes and contact points', 'Refine timing, spacing, arcs, weight, overlap and anticipation', 'Build loops, transitions, layers, masks, IK and interruption rules', 'Synchronize gameplay events, hit windows, VFX and audio cues', 'Integrate compression, retargeting, networking and runtime budgets', 'Review in gameplay camera at multiple speeds and fix every visible defect'], 'qualityGates': ['Strong poses read without context', 'Weight, balance and contacts remain believable', 'Timing supports gameplay rather than delaying it', 'Transitions have no pops, foot slides or dead frames', 'Loops preserve phase and root-motion policy', 'Events align with visible action frames', 'Retargeted/runtime output matches source intent', 'Engine capture and state-machine tests pass']}, 'ms_blender_animation_studio': {'description': 'Blender animation studio with a senior ten-year-studio craft bar.', 'category': 'animation', 'stages': ['Establish reference, emotional intent and gameplay readability', 'Inspect rig hierarchy, scale, constraints and existing clips', 'Block unmistakable key poses, silhouettes and contact points', 'Refine timing, spacing, arcs, weight, overlap and anticipation', 'Build loops, transitions, layers, masks, IK and interruption rules', 'Synchronize gameplay events, hit windows, VFX and audio cues', 'Integrate compression, retargeting, networking and runtime budgets', 'Review in gameplay camera at multiple speeds and fix every visible defect'], 'qualityGates': ['Strong poses read without context', 'Weight, balance and contacts remain believable', 'Timing supports gameplay rather than delaying it', 'Transitions have no pops, foot slides or dead frames', 'Loops preserve phase and root-motion policy', 'Events align with visible action frames', 'Retargeted/runtime output matches source intent', 'Engine capture and state-machine tests pass']}, 'ms_unity_animation_studio': {'description': 'Unity animation studio with a senior ten-year-studio craft bar.', 'category': 'animation', 'stages': ['Establish reference, emotional intent and gameplay readability', 'Inspect rig hierarchy, scale, constraints and existing clips', 'Block unmistakable key poses, silhouettes and contact points', 'Refine timing, spacing, arcs, weight, overlap and anticipation', 'Build loops, transitions, layers, masks, IK and interruption rules', 'Synchronize gameplay events, hit windows, VFX and audio cues', 'Integrate compression, retargeting, networking and runtime budgets', 'Review in gameplay camera at multiple speeds and fix every visible defect'], 'qualityGates': ['Strong poses read without context', 'Weight, balance and contacts remain believable', 'Timing supports gameplay rather than delaying it', 'Transitions have no pops, foot slides or dead frames', 'Loops preserve phase and root-motion policy', 'Events align with visible action frames', 'Retargeted/runtime output matches source intent', 'Engine capture and state-machine tests pass']}, 'ms_godot_animation_studio': {'description': 'Godot animation studio with a senior ten-year-studio craft bar.', 'category': 'animation', 'stages': ['Establish reference, emotional intent and gameplay readability', 'Inspect rig hierarchy, scale, constraints and existing clips', 'Block unmistakable key poses, silhouettes and contact points', 'Refine timing, spacing, arcs, weight, overlap and anticipation', 'Build loops, transitions, layers, masks, IK and interruption rules', 'Synchronize gameplay events, hit windows, VFX and audio cues', 'Integrate compression, retargeting, networking and runtime budgets', 'Review in gameplay camera at multiple speeds and fix every visible defect'], 'qualityGates': ['Strong poses read without context', 'Weight, balance and contacts remain believable', 'Timing supports gameplay rather than delaying it', 'Transitions have no pops, foot slides or dead frames', 'Loops preserve phase and root-motion policy', 'Events align with visible action frames', 'Retargeted/runtime output matches source intent', 'Engine capture and state-machine tests pass']}, 'ms_combat_animation_polish': {'description': 'Combat animation polish with a senior ten-year-studio craft bar.', 'category': 'animation', 'stages': ['Establish reference, emotional intent and gameplay readability', 'Inspect rig hierarchy, scale, constraints and existing clips', 'Block unmistakable key poses, silhouettes and contact points', 'Refine timing, spacing, arcs, weight, overlap and anticipation', 'Build loops, transitions, layers, masks, IK and interruption rules', 'Synchronize gameplay events, hit windows, VFX and audio cues', 'Integrate compression, retargeting, networking and runtime budgets', 'Review in gameplay camera at multiple speeds and fix every visible defect'], 'qualityGates': ['Strong poses read without context', 'Weight, balance and contacts remain believable', 'Timing supports gameplay rather than delaying it', 'Transitions have no pops, foot slides or dead frames', 'Loops preserve phase and root-motion policy', 'Events align with visible action frames', 'Retargeted/runtime output matches source intent', 'Engine capture and state-machine tests pass']}, 'ms_locomotion_animation_polish': {'description': 'Locomotion animation polish with a senior ten-year-studio craft bar.', 'category': 'animation', 'stages': ['Establish reference, emotional intent and gameplay readability', 'Inspect rig hierarchy, scale, constraints and existing clips', 'Block unmistakable key poses, silhouettes and contact points', 'Refine timing, spacing, arcs, weight, overlap and anticipation', 'Build loops, transitions, layers, masks, IK and interruption rules', 'Synchronize gameplay events, hit windows, VFX and audio cues', 'Integrate compression, retargeting, networking and runtime budgets', 'Review in gameplay camera at multiple speeds and fix every visible defect'], 'qualityGates': ['Strong poses read without context', 'Weight, balance and contacts remain believable', 'Timing supports gameplay rather than delaying it', 'Transitions have no pops, foot slides or dead frames', 'Loops preserve phase and root-motion policy', 'Events align with visible action frames', 'Retargeted/runtime output matches source intent', 'Engine capture and state-machine tests pass']}, 'ms_cinematic_animation_polish': {'description': 'Cinematic animation polish with a senior ten-year-studio craft bar.', 'category': 'animation', 'stages': ['Establish reference, emotional intent and gameplay readability', 'Inspect rig hierarchy, scale, constraints and existing clips', 'Block unmistakable key poses, silhouettes and contact points', 'Refine timing, spacing, arcs, weight, overlap and anticipation', 'Build loops, transitions, layers, masks, IK and interruption rules', 'Synchronize gameplay events, hit windows, VFX and audio cues', 'Integrate compression, retargeting, networking and runtime budgets', 'Review in gameplay camera at multiple speeds and fix every visible defect'], 'qualityGates': ['Strong poses read without context', 'Weight, balance and contacts remain believable', 'Timing supports gameplay rather than delaying it', 'Transitions have no pops, foot slides or dead frames', 'Loops preserve phase and root-motion policy', 'Events align with visible action frames', 'Retargeted/runtime output matches source intent', 'Engine capture and state-machine tests pass']}, 'ms_creature_animation': {'description': 'Creature animation with a senior ten-year-studio craft bar.', 'category': 'animation', 'stages': ['Establish reference, emotional intent and gameplay readability', 'Inspect rig hierarchy, scale, constraints and existing clips', 'Block unmistakable key poses, silhouettes and contact points', 'Refine timing, spacing, arcs, weight, overlap and anticipation', 'Build loops, transitions, layers, masks, IK and interruption rules', 'Synchronize gameplay events, hit windows, VFX and audio cues', 'Integrate compression, retargeting, networking and runtime budgets', 'Review in gameplay camera at multiple speeds and fix every visible defect'], 'qualityGates': ['Strong poses read without context', 'Weight, balance and contacts remain believable', 'Timing supports gameplay rather than delaying it', 'Transitions have no pops, foot slides or dead frames', 'Loops preserve phase and root-motion policy', 'Events align with visible action frames', 'Retargeted/runtime output matches source intent', 'Engine capture and state-machine tests pass']}, 'ms_facial_animation': {'description': 'Facial animation with a senior ten-year-studio craft bar.', 'category': 'animation', 'stages': ['Establish reference, emotional intent and gameplay readability', 'Inspect rig hierarchy, scale, constraints and existing clips', 'Block unmistakable key poses, silhouettes and contact points', 'Refine timing, spacing, arcs, weight, overlap and anticipation', 'Build loops, transitions, layers, masks, IK and interruption rules', 'Synchronize gameplay events, hit windows, VFX and audio cues', 'Integrate compression, retargeting, networking and runtime budgets', 'Review in gameplay camera at multiple speeds and fix every visible defect'], 'qualityGates': ['Strong poses read without context', 'Weight, balance and contacts remain believable', 'Timing supports gameplay rather than delaying it', 'Transitions have no pops, foot slides or dead frames', 'Loops preserve phase and root-motion policy', 'Events align with visible action frames', 'Retargeted/runtime output matches source intent', 'Engine capture and state-machine tests pass']}, 'ms_animation_retargeting': {'description': 'Animation retargeting with a senior ten-year-studio craft bar.', 'category': 'animation', 'stages': ['Establish reference, emotional intent and gameplay readability', 'Inspect rig hierarchy, scale, constraints and existing clips', 'Block unmistakable key poses, silhouettes and contact points', 'Refine timing, spacing, arcs, weight, overlap and anticipation', 'Build loops, transitions, layers, masks, IK and interruption rules', 'Synchronize gameplay events, hit windows, VFX and audio cues', 'Integrate compression, retargeting, networking and runtime budgets', 'Review in gameplay camera at multiple speeds and fix every visible defect'], 'qualityGates': ['Strong poses read without context', 'Weight, balance and contacts remain believable', 'Timing supports gameplay rather than delaying it', 'Transitions have no pops, foot slides or dead frames', 'Loops preserve phase and root-motion policy', 'Events align with visible action frames', 'Retargeted/runtime output matches source intent', 'Engine capture and state-machine tests pass']}, 'ms_animation_state_machine': {'description': 'Animation state-machine direction with a senior ten-year-studio craft bar.', 'category': 'animation', 'stages': ['Establish reference, emotional intent and gameplay readability', 'Inspect rig hierarchy, scale, constraints and existing clips', 'Block unmistakable key poses, silhouettes and contact points', 'Refine timing, spacing, arcs, weight, overlap and anticipation', 'Build loops, transitions, layers, masks, IK and interruption rules', 'Synchronize gameplay events, hit windows, VFX and audio cues', 'Integrate compression, retargeting, networking and runtime budgets', 'Review in gameplay camera at multiple speeds and fix every visible defect'], 'qualityGates': ['Strong poses read without context', 'Weight, balance and contacts remain believable', 'Timing supports gameplay rather than delaying it', 'Transitions have no pops, foot slides or dead frames', 'Loops preserve phase and root-motion policy', 'Events align with visible action frames', 'Retargeted/runtime output matches source intent', 'Engine capture and state-machine tests pass']}, 'ms_animation_runtime_qa': {'description': 'Animation runtime QA with a senior ten-year-studio craft bar.', 'category': 'animation', 'stages': ['Establish reference, emotional intent and gameplay readability', 'Inspect rig hierarchy, scale, constraints and existing clips', 'Block unmistakable key poses, silhouettes and contact points', 'Refine timing, spacing, arcs, weight, overlap and anticipation', 'Build loops, transitions, layers, masks, IK and interruption rules', 'Synchronize gameplay events, hit windows, VFX and audio cues', 'Integrate compression, retargeting, networking and runtime budgets', 'Review in gameplay camera at multiple speeds and fix every visible defect'], 'qualityGates': ['Strong poses read without context', 'Weight, balance and contacts remain believable', 'Timing supports gameplay rather than delaying it', 'Transitions have no pops, foot slides or dead frames', 'Loops preserve phase and root-motion policy', 'Events align with visible action frames', 'Retargeted/runtime output matches source intent', 'Engine capture and state-machine tests pass']}, 'ms_gui_design_studio': {'description': 'Professional GUI design studio with a senior ten-year-studio craft bar.', 'category': 'uiux', 'stages': ['Clarify the user goal, primary path and decision hierarchy', 'Inspect current design language, constraints and target inputs', 'Define tokens for type, color, spacing, radius, depth and motion', 'Build reusable components with complete interaction states', 'Compose responsive layouts for aspect ratios and localization', 'Add controller, keyboard, touch and accessibility behavior', 'Implement tasteful motion, feedback, loading and error recovery', 'Test the real flow with screenshots, navigation and usability evidence'], 'qualityGates': ['Hierarchy makes the primary action obvious', 'Components are reusable and internally consistent', 'Every state is intentional and visually finished', 'Layouts survive small screens and long localized text', 'Focus order and controller navigation have no dead ends', 'Contrast, type scale and target sizes are accessible', 'Motion feels responsive and supports reduced-motion settings', 'Final in-engine flow is functional and beautiful']}, 'ms_roblox_gui_studio': {'description': 'Roblox GUI production studio with a senior ten-year-studio craft bar.', 'category': 'uiux', 'stages': ['Clarify the user goal, primary path and decision hierarchy', 'Inspect current design language, constraints and target inputs', 'Define tokens for type, color, spacing, radius, depth and motion', 'Build reusable components with complete interaction states', 'Compose responsive layouts for aspect ratios and localization', 'Add controller, keyboard, touch and accessibility behavior', 'Implement tasteful motion, feedback, loading and error recovery', 'Test the real flow with screenshots, navigation and usability evidence'], 'qualityGates': ['Hierarchy makes the primary action obvious', 'Components are reusable and internally consistent', 'Every state is intentional and visually finished', 'Layouts survive small screens and long localized text', 'Focus order and controller navigation have no dead ends', 'Contrast, type scale and target sizes are accessible', 'Motion feels responsive and supports reduced-motion settings', 'Final in-engine flow is functional and beautiful']}, 'ms_unity_ui_studio': {'description': 'Unity UI production studio with a senior ten-year-studio craft bar.', 'category': 'uiux', 'stages': ['Clarify the user goal, primary path and decision hierarchy', 'Inspect current design language, constraints and target inputs', 'Define tokens for type, color, spacing, radius, depth and motion', 'Build reusable components with complete interaction states', 'Compose responsive layouts for aspect ratios and localization', 'Add controller, keyboard, touch and accessibility behavior', 'Implement tasteful motion, feedback, loading and error recovery', 'Test the real flow with screenshots, navigation and usability evidence'], 'qualityGates': ['Hierarchy makes the primary action obvious', 'Components are reusable and internally consistent', 'Every state is intentional and visually finished', 'Layouts survive small screens and long localized text', 'Focus order and controller navigation have no dead ends', 'Contrast, type scale and target sizes are accessible', 'Motion feels responsive and supports reduced-motion settings', 'Final in-engine flow is functional and beautiful']}, 'ms_godot_ui_studio': {'description': 'Godot UI production studio with a senior ten-year-studio craft bar.', 'category': 'uiux', 'stages': ['Clarify the user goal, primary path and decision hierarchy', 'Inspect current design language, constraints and target inputs', 'Define tokens for type, color, spacing, radius, depth and motion', 'Build reusable components with complete interaction states', 'Compose responsive layouts for aspect ratios and localization', 'Add controller, keyboard, touch and accessibility behavior', 'Implement tasteful motion, feedback, loading and error recovery', 'Test the real flow with screenshots, navigation and usability evidence'], 'qualityGates': ['Hierarchy makes the primary action obvious', 'Components are reusable and internally consistent', 'Every state is intentional and visually finished', 'Layouts survive small screens and long localized text', 'Focus order and controller navigation have no dead ends', 'Contrast, type scale and target sizes are accessible', 'Motion feels responsive and supports reduced-motion settings', 'Final in-engine flow is functional and beautiful']}, 'ms_ui_motion_design': {'description': 'UI motion and micro-interaction design with a senior ten-year-studio craft bar.', 'category': 'uiux', 'stages': ['Clarify the user goal, primary path and decision hierarchy', 'Inspect current design language, constraints and target inputs', 'Define tokens for type, color, spacing, radius, depth and motion', 'Build reusable components with complete interaction states', 'Compose responsive layouts for aspect ratios and localization', 'Add controller, keyboard, touch and accessibility behavior', 'Implement tasteful motion, feedback, loading and error recovery', 'Test the real flow with screenshots, navigation and usability evidence'], 'qualityGates': ['Hierarchy makes the primary action obvious', 'Components are reusable and internally consistent', 'Every state is intentional and visually finished', 'Layouts survive small screens and long localized text', 'Focus order and controller navigation have no dead ends', 'Contrast, type scale and target sizes are accessible', 'Motion feels responsive and supports reduced-motion settings', 'Final in-engine flow is functional and beautiful']}, 'ms_design_system_production': {'description': 'Design-system production with a senior ten-year-studio craft bar.', 'category': 'uiux', 'stages': ['Clarify the user goal, primary path and decision hierarchy', 'Inspect current design language, constraints and target inputs', 'Define tokens for type, color, spacing, radius, depth and motion', 'Build reusable components with complete interaction states', 'Compose responsive layouts for aspect ratios and localization', 'Add controller, keyboard, touch and accessibility behavior', 'Implement tasteful motion, feedback, loading and error recovery', 'Test the real flow with screenshots, navigation and usability evidence'], 'qualityGates': ['Hierarchy makes the primary action obvious', 'Components are reusable and internally consistent', 'Every state is intentional and visually finished', 'Layouts survive small screens and long localized text', 'Focus order and controller navigation have no dead ends', 'Contrast, type scale and target sizes are accessible', 'Motion feels responsive and supports reduced-motion settings', 'Final in-engine flow is functional and beautiful']}, 'ms_responsive_interface_polish': {'description': 'Responsive interface polish with a senior ten-year-studio craft bar.', 'category': 'uiux', 'stages': ['Clarify the user goal, primary path and decision hierarchy', 'Inspect current design language, constraints and target inputs', 'Define tokens for type, color, spacing, radius, depth and motion', 'Build reusable components with complete interaction states', 'Compose responsive layouts for aspect ratios and localization', 'Add controller, keyboard, touch and accessibility behavior', 'Implement tasteful motion, feedback, loading and error recovery', 'Test the real flow with screenshots, navigation and usability evidence'], 'qualityGates': ['Hierarchy makes the primary action obvious', 'Components are reusable and internally consistent', 'Every state is intentional and visually finished', 'Layouts survive small screens and long localized text', 'Focus order and controller navigation have no dead ends', 'Contrast, type scale and target sizes are accessible', 'Motion feels responsive and supports reduced-motion settings', 'Final in-engine flow is functional and beautiful']}, 'ms_controller_navigation_ux': {'description': 'Controller-navigation UX with a senior ten-year-studio craft bar.', 'category': 'uiux', 'stages': ['Clarify the user goal, primary path and decision hierarchy', 'Inspect current design language, constraints and target inputs', 'Define tokens for type, color, spacing, radius, depth and motion', 'Build reusable components with complete interaction states', 'Compose responsive layouts for aspect ratios and localization', 'Add controller, keyboard, touch and accessibility behavior', 'Implement tasteful motion, feedback, loading and error recovery', 'Test the real flow with screenshots, navigation and usability evidence'], 'qualityGates': ['Hierarchy makes the primary action obvious', 'Components are reusable and internally consistent', 'Every state is intentional and visually finished', 'Layouts survive small screens and long localized text', 'Focus order and controller navigation have no dead ends', 'Contrast, type scale and target sizes are accessible', 'Motion feels responsive and supports reduced-motion settings', 'Final in-engine flow is functional and beautiful']}, 'ms_accessible_interface_polish': {'description': 'Accessible interface polish with a senior ten-year-studio craft bar.', 'category': 'uiux', 'stages': ['Clarify the user goal, primary path and decision hierarchy', 'Inspect current design language, constraints and target inputs', 'Define tokens for type, color, spacing, radius, depth and motion', 'Build reusable components with complete interaction states', 'Compose responsive layouts for aspect ratios and localization', 'Add controller, keyboard, touch and accessibility behavior', 'Implement tasteful motion, feedback, loading and error recovery', 'Test the real flow with screenshots, navigation and usability evidence'], 'qualityGates': ['Hierarchy makes the primary action obvious', 'Components are reusable and internally consistent', 'Every state is intentional and visually finished', 'Layouts survive small screens and long localized text', 'Focus order and controller navigation have no dead ends', 'Contrast, type scale and target sizes are accessible', 'Motion feels responsive and supports reduced-motion settings', 'Final in-engine flow is functional and beautiful']}, 'ms_usability_polish': {'description': 'Usability and flow polish with a senior ten-year-studio craft bar.', 'category': 'uiux', 'stages': ['Clarify the user goal, primary path and decision hierarchy', 'Inspect current design language, constraints and target inputs', 'Define tokens for type, color, spacing, radius, depth and motion', 'Build reusable components with complete interaction states', 'Compose responsive layouts for aspect ratios and localization', 'Add controller, keyboard, touch and accessibility behavior', 'Implement tasteful motion, feedback, loading and error recovery', 'Test the real flow with screenshots, navigation and usability evidence'], 'qualityGates': ['Hierarchy makes the primary action obvious', 'Components are reusable and internally consistent', 'Every state is intentional and visually finished', 'Layouts survive small screens and long localized text', 'Focus order and controller navigation have no dead ends', 'Contrast, type scale and target sizes are accessible', 'Motion feels responsive and supports reduced-motion settings', 'Final in-engine flow is functional and beautiful']}, 'ms_blender_model_studio': {'description': 'Blender model studio with a senior ten-year-studio craft bar. Chooses the primitive per feature rather than defaulting to a sphere, and blocks forms that read before detailing them.', 'category': 'art3d', 'stages': ['Define art direction, references, scale and gameplay silhouette', 'Inspect target engine metrics, camera distance and asset budget', 'Decide the FORM of every distinct feature before adding geometry - call ms_form_guidance (action="audit") with the part list; a limb/shaft/pipe/neck is a cylinder, a plate/housing/crate/panel is a beveled box, anything path-like (cable/hose/rope/tail) is a swept Bezier curve, anything defined by its outline (gear/bracket/beam/blade) is an extruded profile, and a sphere is reserved for genuinely round parts only (eyeball, ball joint, planet, ball, berry, knob, dome)', 'Block primary forms with those correct primitives, then establish proportion, composition and value structure - bevel silhouette edges and taper cylinders so the blockout already reads as the final object rather than as placeholder primitives', 'Refine topology, deformation, UVs, pivots and modular boundaries', 'Author coherent materials, textures and controlled detail hierarchy', 'Create lighting and presentation that supports the intended mood', 'Export and integrate correct scale, axes, collisions, LODs and shaders', 'Validate from gameplay view and optimize without losing the art target'], 'qualityGates': ['Every part uses a form appropriate to what it is - no sphere standing in for a limb, plate or cable', 'The blockout reads as the intended object before any detail or material is added', 'Silhouette and focal hierarchy read at gameplay distance', 'Topology, normals and UVs are technically clean', 'Material response is coherent under representative lighting', 'Detail density supports—not fights—the focal point', 'Scale, pivot, collision and orientation import correctly', 'LODs and compression preserve quality within budget', 'Asset matches the surrounding project art language', 'Final engine capture meets the reference bar']}, 'ms_stylized_art_production': {'description': 'Stylized art production with a senior ten-year-studio craft bar.', 'category': 'art3d', 'stages': ['Define art direction, references, scale and gameplay silhouette', 'Inspect target engine metrics, camera distance and asset budget', 'Block primary forms, proportion, composition and value structure', 'Refine topology, deformation, UVs, pivots and modular boundaries', 'Author coherent materials, textures and controlled detail hierarchy', 'Create lighting and presentation that supports the intended mood', 'Export and integrate correct scale, axes, collisions, LODs and shaders', 'Validate from gameplay view and optimize without losing the art target'], 'qualityGates': ['Silhouette and focal hierarchy read at gameplay distance', 'Topology, normals and UVs are technically clean', 'Material response is coherent under representative lighting', 'Detail density supports—not fights—the focal point', 'Scale, pivot, collision and orientation import correctly', 'LODs and compression preserve quality within budget', 'Asset matches the surrounding project art language', 'Final engine capture meets the reference bar']}, 'ms_realistic_art_production': {'description': 'Realistic art production with a senior ten-year-studio craft bar.', 'category': 'art3d', 'stages': ['Define art direction, references, scale and gameplay silhouette', 'Inspect target engine metrics, camera distance and asset budget', 'Block primary forms, proportion, composition and value structure', 'Refine topology, deformation, UVs, pivots and modular boundaries', 'Author coherent materials, textures and controlled detail hierarchy', 'Create lighting and presentation that supports the intended mood', 'Export and integrate correct scale, axes, collisions, LODs and shaders', 'Validate from gameplay view and optimize without losing the art target'], 'qualityGates': ['Silhouette and focal hierarchy read at gameplay distance', 'Topology, normals and UVs are technically clean', 'Material response is coherent under representative lighting', 'Detail density supports—not fights—the focal point', 'Scale, pivot, collision and orientation import correctly', 'LODs and compression preserve quality within budget', 'Asset matches the surrounding project art language', 'Final engine capture meets the reference bar']}, 'ms_environment_art_studio': {'description': 'Environment art studio with a senior ten-year-studio craft bar.', 'category': 'art3d', 'stages': ['Define art direction, references, scale and gameplay silhouette', 'Inspect target engine metrics, camera distance and asset budget', 'Block primary forms, proportion, composition and value structure', 'Refine topology, deformation, UVs, pivots and modular boundaries', 'Author coherent materials, textures and controlled detail hierarchy', 'Create lighting and presentation that supports the intended mood', 'Export and integrate correct scale, axes, collisions, LODs and shaders', 'Validate from gameplay view and optimize without losing the art target'], 'qualityGates': ['Silhouette and focal hierarchy read at gameplay distance', 'Topology, normals and UVs are technically clean', 'Material response is coherent under representative lighting', 'Detail density supports—not fights—the focal point', 'Scale, pivot, collision and orientation import correctly', 'LODs and compression preserve quality within budget', 'Asset matches the surrounding project art language', 'Final engine capture meets the reference bar']}, 'ms_character_art_studio': {'description': 'Character art studio with a senior ten-year-studio craft bar.', 'category': 'art3d', 'stages': ['Define art direction, references, scale and gameplay silhouette', 'Inspect target engine metrics, camera distance and asset budget', 'Block primary forms, proportion, composition and value structure', 'Refine topology, deformation, UVs, pivots and modular boundaries', 'Author coherent materials, textures and controlled detail hierarchy', 'Create lighting and presentation that supports the intended mood', 'Export and integrate correct scale, axes, collisions, LODs and shaders', 'Validate from gameplay view and optimize without losing the art target'], 'qualityGates': ['Silhouette and focal hierarchy read at gameplay distance', 'Topology, normals and UVs are technically clean', 'Material response is coherent under representative lighting', 'Detail density supports—not fights—the focal point', 'Scale, pivot, collision and orientation import correctly', 'LODs and compression preserve quality within budget', 'Asset matches the surrounding project art language', 'Final engine capture meets the reference bar']}, 'ms_prop_art_studio': {'description': 'Prop art studio with a senior ten-year-studio craft bar.', 'category': 'art3d', 'stages': ['Define art direction, references, scale and gameplay silhouette', 'Inspect target engine metrics, camera distance and asset budget', 'Block primary forms, proportion, composition and value structure', 'Refine topology, deformation, UVs, pivots and modular boundaries', 'Author coherent materials, textures and controlled detail hierarchy', 'Create lighting and presentation that supports the intended mood', 'Export and integrate correct scale, axes, collisions, LODs and shaders', 'Validate from gameplay view and optimize without losing the art target'], 'qualityGates': ['Silhouette and focal hierarchy read at gameplay distance', 'Topology, normals and UVs are technically clean', 'Material response is coherent under representative lighting', 'Detail density supports—not fights—the focal point', 'Scale, pivot, collision and orientation import correctly', 'LODs and compression preserve quality within budget', 'Asset matches the surrounding project art language', 'Final engine capture meets the reference bar']}, 'ms_pbr_material_studio': {'description': 'PBR material studio with a senior ten-year-studio craft bar.', 'category': 'art3d', 'stages': ['Define art direction, references, scale and gameplay silhouette', 'Inspect target engine metrics, camera distance and asset budget', 'Block primary forms, proportion, composition and value structure', 'Refine topology, deformation, UVs, pivots and modular boundaries', 'Author coherent materials, textures and controlled detail hierarchy', 'Create lighting and presentation that supports the intended mood', 'Export and integrate correct scale, axes, collisions, LODs and shaders', 'Validate from gameplay view and optimize without losing the art target'], 'qualityGates': ['Silhouette and focal hierarchy read at gameplay distance', 'Topology, normals and UVs are technically clean', 'Material response is coherent under representative lighting', 'Detail density supports—not fights—the focal point', 'Scale, pivot, collision and orientation import correctly', 'LODs and compression preserve quality within budget', 'Asset matches the surrounding project art language', 'Final engine capture meets the reference bar']}, 'ms_texture_detail_polish': {'description': 'Texture detail polish with a senior ten-year-studio craft bar.', 'category': 'art3d', 'stages': ['Define art direction, references, scale and gameplay silhouette', 'Inspect target engine metrics, camera distance and asset budget', 'Block primary forms, proportion, composition and value structure', 'Refine topology, deformation, UVs, pivots and modular boundaries', 'Author coherent materials, textures and controlled detail hierarchy', 'Create lighting and presentation that supports the intended mood', 'Export and integrate correct scale, axes, collisions, LODs and shaders', 'Validate from gameplay view and optimize without losing the art target'], 'qualityGates': ['Silhouette and focal hierarchy read at gameplay distance', 'Topology, normals and UVs are technically clean', 'Material response is coherent under representative lighting', 'Detail density supports—not fights—the focal point', 'Scale, pivot, collision and orientation import correctly', 'LODs and compression preserve quality within budget', 'Asset matches the surrounding project art language', 'Final engine capture meets the reference bar']}, 'ms_lighting_art_studio': {'description': 'Lighting art studio with a senior ten-year-studio craft bar.', 'category': 'art3d', 'stages': ['Define art direction, references, scale and gameplay silhouette', 'Inspect target engine metrics, camera distance and asset budget', 'Block primary forms, proportion, composition and value structure', 'Refine topology, deformation, UVs, pivots and modular boundaries', 'Author coherent materials, textures and controlled detail hierarchy', 'Create lighting and presentation that supports the intended mood', 'Export and integrate correct scale, axes, collisions, LODs and shaders', 'Validate from gameplay view and optimize without losing the art target'], 'qualityGates': ['Silhouette and focal hierarchy read at gameplay distance', 'Topology, normals and UVs are technically clean', 'Material response is coherent under representative lighting', 'Detail density supports—not fights—the focal point', 'Scale, pivot, collision and orientation import correctly', 'LODs and compression preserve quality within budget', 'Asset matches the surrounding project art language', 'Final engine capture meets the reference bar']}, 'ms_composition_render_polish': {'description': 'Composition and render polish with a senior ten-year-studio craft bar.', 'category': 'art3d', 'stages': ['Define art direction, references, scale and gameplay silhouette', 'Inspect target engine metrics, camera distance and asset budget', 'Block primary forms, proportion, composition and value structure', 'Refine topology, deformation, UVs, pivots and modular boundaries', 'Author coherent materials, textures and controlled detail hierarchy', 'Create lighting and presentation that supports the intended mood', 'Export and integrate correct scale, axes, collisions, LODs and shaders', 'Validate from gameplay view and optimize without losing the art target'], 'qualityGates': ['Silhouette and focal hierarchy read at gameplay distance', 'Topology, normals and UVs are technically clean', 'Material response is coherent under representative lighting', 'Detail density supports—not fights—the focal point', 'Scale, pivot, collision and orientation import correctly', 'LODs and compression preserve quality within budget', 'Asset matches the surrounding project art language', 'Final engine capture meets the reference bar']}, 'ms_game_feel_director': {'description': 'Game-feel director with a senior ten-year-studio craft bar.', 'category': 'gameplay', 'stages': ['Define the player fantasy and the exact feeling to create', 'Inspect existing controls, camera, animation, feedback and metrics', 'Set measurable response, timing, acceleration and clarity targets', 'Implement the smallest complete interactive loop in the real engine', 'Layer animation, VFX, audio, haptics and camera feedback with restraint', 'Handle cancellation, failure, latency, accessibility and edge states', 'Tune with repeatable scenarios and player-facing telemetry', 'Play-test, compare against targets and iterate until the feel is cohesive'], 'qualityGates': ['Input-to-feedback latency feels immediate', 'Rules and outcomes are legible without explanation', 'Feedback is layered but never noisy', 'Difficulty and timing are fair across target inputs', 'Systems remain secure and deterministic where needed', 'Edge and interruption states recover gracefully', 'Performance remains stable under representative load', 'Play-test evidence supports the final tuning']}, 'ms_combat_feel_director': {'description': 'Combat-feel director with a senior ten-year-studio craft bar.', 'category': 'gameplay', 'stages': ['Define the player fantasy and the exact feeling to create', 'Inspect existing controls, camera, animation, feedback and metrics', 'Set measurable response, timing, acceleration and clarity targets', 'Implement the smallest complete interactive loop in the real engine', 'Layer animation, VFX, audio, haptics and camera feedback with restraint', 'Handle cancellation, failure, latency, accessibility and edge states', 'Tune with repeatable scenarios and player-facing telemetry', 'Play-test, compare against targets and iterate until the feel is cohesive'], 'qualityGates': ['Input-to-feedback latency feels immediate', 'Rules and outcomes are legible without explanation', 'Feedback is layered but never noisy', 'Difficulty and timing are fair across target inputs', 'Systems remain secure and deterministic where needed', 'Edge and interruption states recover gracefully', 'Performance remains stable under representative load', 'Play-test evidence supports the final tuning']}, 'ms_movement_feel_director': {'description': 'Movement-feel director with a senior ten-year-studio craft bar.', 'category': 'gameplay', 'stages': ['Define the player fantasy and the exact feeling to create', 'Inspect existing controls, camera, animation, feedback and metrics', 'Set measurable response, timing, acceleration and clarity targets', 'Implement the smallest complete interactive loop in the real engine', 'Layer animation, VFX, audio, haptics and camera feedback with restraint', 'Handle cancellation, failure, latency, accessibility and edge states', 'Tune with repeatable scenarios and player-facing telemetry', 'Play-test, compare against targets and iterate until the feel is cohesive'], 'qualityGates': ['Input-to-feedback latency feels immediate', 'Rules and outcomes are legible without explanation', 'Feedback is layered but never noisy', 'Difficulty and timing are fair across target inputs', 'Systems remain secure and deterministic where needed', 'Edge and interruption states recover gracefully', 'Performance remains stable under representative load', 'Play-test evidence supports the final tuning']}, 'ms_camera_feel_director': {'description': 'Camera-feel director with a senior ten-year-studio craft bar.', 'category': 'gameplay', 'stages': ['Define the player fantasy and the exact feeling to create', 'Inspect existing controls, camera, animation, feedback and metrics', 'Set measurable response, timing, acceleration and clarity targets', 'Implement the smallest complete interactive loop in the real engine', 'Layer animation, VFX, audio, haptics and camera feedback with restraint', 'Handle cancellation, failure, latency, accessibility and edge states', 'Tune with repeatable scenarios and player-facing telemetry', 'Play-test, compare against targets and iterate until the feel is cohesive'], 'qualityGates': ['Input-to-feedback latency feels immediate', 'Rules and outcomes are legible without explanation', 'Feedback is layered but never noisy', 'Difficulty and timing are fair across target inputs', 'Systems remain secure and deterministic where needed', 'Edge and interruption states recover gracefully', 'Performance remains stable under representative load', 'Play-test evidence supports the final tuning']}, 'ms_onboarding_experience_polish': {'description': 'Onboarding experience polish with a senior ten-year-studio craft bar.', 'category': 'gameplay', 'stages': ['Define the player fantasy and the exact feeling to create', 'Inspect existing controls, camera, animation, feedback and metrics', 'Set measurable response, timing, acceleration and clarity targets', 'Implement the smallest complete interactive loop in the real engine', 'Layer animation, VFX, audio, haptics and camera feedback with restraint', 'Handle cancellation, failure, latency, accessibility and edge states', 'Tune with repeatable scenarios and player-facing telemetry', 'Play-test, compare against targets and iterate until the feel is cohesive'], 'qualityGates': ['Input-to-feedback latency feels immediate', 'Rules and outcomes are legible without explanation', 'Feedback is layered but never noisy', 'Difficulty and timing are fair across target inputs', 'Systems remain secure and deterministic where needed', 'Edge and interruption states recover gracefully', 'Performance remains stable under representative load', 'Play-test evidence supports the final tuning']}, 'ms_economy_experience_polish': {'description': 'Economy experience polish with a senior ten-year-studio craft bar.', 'category': 'gameplay', 'stages': ['Define the player fantasy and the exact feeling to create', 'Inspect existing controls, camera, animation, feedback and metrics', 'Set measurable response, timing, acceleration and clarity targets', 'Implement the smallest complete interactive loop in the real engine', 'Layer animation, VFX, audio, haptics and camera feedback with restraint', 'Handle cancellation, failure, latency, accessibility and edge states', 'Tune with repeatable scenarios and player-facing telemetry', 'Play-test, compare against targets and iterate until the feel is cohesive'], 'qualityGates': ['Input-to-feedback latency feels immediate', 'Rules and outcomes are legible without explanation', 'Feedback is layered but never noisy', 'Difficulty and timing are fair across target inputs', 'Systems remain secure and deterministic where needed', 'Edge and interruption states recover gracefully', 'Performance remains stable under representative load', 'Play-test evidence supports the final tuning']}, 'ms_social_experience_polish': {'description': 'Social experience polish with a senior ten-year-studio craft bar.', 'category': 'gameplay', 'stages': ['Define the player fantasy and the exact feeling to create', 'Inspect existing controls, camera, animation, feedback and metrics', 'Set measurable response, timing, acceleration and clarity targets', 'Implement the smallest complete interactive loop in the real engine', 'Layer animation, VFX, audio, haptics and camera feedback with restraint', 'Handle cancellation, failure, latency, accessibility and edge states', 'Tune with repeatable scenarios and player-facing telemetry', 'Play-test, compare against targets and iterate until the feel is cohesive'], 'qualityGates': ['Input-to-feedback latency feels immediate', 'Rules and outcomes are legible without explanation', 'Feedback is layered but never noisy', 'Difficulty and timing are fair across target inputs', 'Systems remain secure and deterministic where needed', 'Edge and interruption states recover gracefully', 'Performance remains stable under representative load', 'Play-test evidence supports the final tuning']}, 'ms_progression_experience_polish': {'description': 'Progression experience polish with a senior ten-year-studio craft bar.', 'category': 'gameplay', 'stages': ['Define the player fantasy and the exact feeling to create', 'Inspect existing controls, camera, animation, feedback and metrics', 'Set measurable response, timing, acceleration and clarity targets', 'Implement the smallest complete interactive loop in the real engine', 'Layer animation, VFX, audio, haptics and camera feedback with restraint', 'Handle cancellation, failure, latency, accessibility and edge states', 'Tune with repeatable scenarios and player-facing telemetry', 'Play-test, compare against targets and iterate until the feel is cohesive'], 'qualityGates': ['Input-to-feedback latency feels immediate', 'Rules and outcomes are legible without explanation', 'Feedback is layered but never noisy', 'Difficulty and timing are fair across target inputs', 'Systems remain secure and deterministic where needed', 'Edge and interruption states recover gracefully', 'Performance remains stable under representative load', 'Play-test evidence supports the final tuning']}, 'ms_studio_critic_loop': {'description': 'Studio-grade critic loop with a senior ten-year-studio craft bar.', 'category': 'quality', 'stages': ['Restate the user-visible acceptance criteria and quality target', 'Inspect the real artifact, project state and current evidence', 'Evaluate craft, usability, correctness, cohesion and technical risk', 'Find the highest-impact defects instead of listing cosmetic trivia', 'Fix blocking and high-value issues in the actual target project', 'Retest happy, edge, failure, accessibility and performance paths', 'Compare before/after evidence against the requested outcome', 'Approve only when evidence is concrete; otherwise return precise revisions'], 'qualityGates': ['No plan or generated text is mistaken for the deliverable', 'The requested artifact exists and works end to end', 'Visual and interaction quality is coherent', 'Known edge states are handled honestly', 'Logs and focused tests are clean', 'Performance meets an explicit target-tier budget', 'Final state is read back from the engine', 'Remaining limitations are disclosed rather than hidden']}, 'ms_visual_quality_audit': {'description': 'Visual quality audit with a senior ten-year-studio craft bar.', 'category': 'quality', 'stages': ['Restate the user-visible acceptance criteria and quality target', 'Inspect the real artifact, project state and current evidence', 'Evaluate craft, usability, correctness, cohesion and technical risk', 'Find the highest-impact defects instead of listing cosmetic trivia', 'Fix blocking and high-value issues in the actual target project', 'Retest happy, edge, failure, accessibility and performance paths', 'Compare before/after evidence against the requested outcome', 'Approve only when evidence is concrete; otherwise return precise revisions'], 'qualityGates': ['No plan or generated text is mistaken for the deliverable', 'The requested artifact exists and works end to end', 'Visual and interaction quality is coherent', 'Known edge states are handled honestly', 'Logs and focused tests are clean', 'Performance meets an explicit target-tier budget', 'Final state is read back from the engine', 'Remaining limitations are disclosed rather than hidden']}, 'ms_ui_quality_audit': {'description': 'UI quality audit with a senior ten-year-studio craft bar.', 'category': 'quality', 'stages': ['Restate the user-visible acceptance criteria and quality target', 'Inspect the real artifact, project state and current evidence', 'Evaluate craft, usability, correctness, cohesion and technical risk', 'Find the highest-impact defects instead of listing cosmetic trivia', 'Fix blocking and high-value issues in the actual target project', 'Retest happy, edge, failure, accessibility and performance paths', 'Compare before/after evidence against the requested outcome', 'Approve only when evidence is concrete; otherwise return precise revisions'], 'qualityGates': ['No plan or generated text is mistaken for the deliverable', 'The requested artifact exists and works end to end', 'Visual and interaction quality is coherent', 'Known edge states are handled honestly', 'Logs and focused tests are clean', 'Performance meets an explicit target-tier budget', 'Final state is read back from the engine', 'Remaining limitations are disclosed rather than hidden']}, 'ms_gameplay_quality_audit': {'description': 'Gameplay quality audit with a senior ten-year-studio craft bar.', 'category': 'quality', 'stages': ['Restate the user-visible acceptance criteria and quality target', 'Inspect the real artifact, project state and current evidence', 'Evaluate craft, usability, correctness, cohesion and technical risk', 'Find the highest-impact defects instead of listing cosmetic trivia', 'Fix blocking and high-value issues in the actual target project', 'Retest happy, edge, failure, accessibility and performance paths', 'Compare before/after evidence against the requested outcome', 'Approve only when evidence is concrete; otherwise return precise revisions'], 'qualityGates': ['No plan or generated text is mistaken for the deliverable', 'The requested artifact exists and works end to end', 'Visual and interaction quality is coherent', 'Known edge states are handled honestly', 'Logs and focused tests are clean', 'Performance meets an explicit target-tier budget', 'Final state is read back from the engine', 'Remaining limitations are disclosed rather than hidden']}, 'ms_performance_quality_audit': {'description': 'Performance quality audit with a senior ten-year-studio craft bar.', 'category': 'quality', 'stages': ['Restate the user-visible acceptance criteria and quality target', 'Inspect the real artifact, project state and current evidence', 'Evaluate craft, usability, correctness, cohesion and technical risk', 'Find the highest-impact defects instead of listing cosmetic trivia', 'Fix blocking and high-value issues in the actual target project', 'Retest happy, edge, failure, accessibility and performance paths', 'Compare before/after evidence against the requested outcome', 'Approve only when evidence is concrete; otherwise return precise revisions'], 'qualityGates': ['No plan or generated text is mistaken for the deliverable', 'The requested artifact exists and works end to end', 'Visual and interaction quality is coherent', 'Known edge states are handled honestly', 'Logs and focused tests are clean', 'Performance meets an explicit target-tier budget', 'Final state is read back from the engine', 'Remaining limitations are disclosed rather than hidden']}, 'ms_cross_engine_integration_audit': {'description': 'Cross-engine integration audit with a senior ten-year-studio craft bar.', 'category': 'quality', 'stages': ['Restate the user-visible acceptance criteria and quality target', 'Inspect the real artifact, project state and current evidence', 'Evaluate craft, usability, correctness, cohesion and technical risk', 'Find the highest-impact defects instead of listing cosmetic trivia', 'Fix blocking and high-value issues in the actual target project', 'Retest happy, edge, failure, accessibility and performance paths', 'Compare before/after evidence against the requested outcome', 'Approve only when evidence is concrete; otherwise return precise revisions'], 'qualityGates': ['No plan or generated text is mistaken for the deliverable', 'The requested artifact exists and works end to end', 'Visual and interaction quality is coherent', 'Known edge states are handled honestly', 'Logs and focused tests are clean', 'Performance meets an explicit target-tier budget', 'Final state is read back from the engine', 'Remaining limitations are disclosed rather than hidden']}, 'ms_release_quality_bar': {'description': 'Release quality bar with a senior ten-year-studio craft bar.', 'category': 'quality', 'stages': ['Restate the user-visible acceptance criteria and quality target', 'Inspect the real artifact, project state and current evidence', 'Evaluate craft, usability, correctness, cohesion and technical risk', 'Find the highest-impact defects instead of listing cosmetic trivia', 'Fix blocking and high-value issues in the actual target project', 'Retest happy, edge, failure, accessibility and performance paths', 'Compare before/after evidence against the requested outcome', 'Approve only when evidence is concrete; otherwise return precise revisions'], 'qualityGates': ['No plan or generated text is mistaken for the deliverable', 'The requested artifact exists and works end to end', 'Visual and interaction quality is coherent', 'Known edge states are handled honestly', 'Logs and focused tests are clean', 'Performance meets an explicit target-tier budget', 'Final state is read back from the engine', 'Remaining limitations are disclosed rather than hidden']}}
 ROBLOX_STUDIO_V3_CONTRACTS = {'ms_roblox_datamodel_architecture': {'description': 'Roblox Studio specialist for DataModel architecture, service boundaries, boot order, lifecycle and dependency direction.', 'category': 'architecture', 'stages': ['Define the requested player outcome and Roblox acceptance criteria for DataModel architecture, service boundaries, boot order, lifecycle and dependency direction', 'Inspect the live DataModel, relevant scripts, services, remotes, assets, settings and current conventions', 'Read exact advertised Roblox Studio MCP schemas and choose rollback-safe native operations', 'Design the production implementation for DataModel architecture, service boundaries, boot order, lifecycle and dependency direction with explicit server/client/editor ownership', 'Implement the real change in Studio without replacing existing architecture or explicit intent', 'Integrate gameplay, UI, animation, VFX, audio, persistence and platform behavior wherever connected', 'Exercise failure, interruption, exploit, respawn, reconnect, streaming and weakest-device cases where relevant', 'Run Edit/Server/Client evidence, inspect Output and profiler/network state, fix defects and read back final hierarchy'], 'qualityGates': ['Exact Roblox services, APIs, instance paths and ownership are verified before edits', 'Server authority and every client-controlled value are validated where consequential', 'Connections, tasks, instances, animations and resources have deterministic lifecycle cleanup', 'Streaming, respawn, teleport, reconnect and late-join behavior remain correct where relevant', 'Keyboard/mouse, touch and gamepad behavior is complete where relevant', 'Weak-device CPU, GPU, memory, network and loading budgets are measured', 'Studio Output and focused multi-client tests contain no unexplained failures', 'Final DataModel state and runtime evidence prove the requested result']}, 'ms_roblox_remote_contract_security': {'description': 'Roblox Studio specialist for RemoteEvent/RemoteFunction schemas, authority, validation, rate limits and exploit tests.', 'category': 'quality', 'stages': ['Define the requested player outcome and Roblox acceptance criteria for RemoteEvent/RemoteFunction schemas, authority, validation, rate limits and exploit tests', 'Inspect the live DataModel, relevant scripts, services, remotes, assets, settings and current conventions', 'Read exact advertised Roblox Studio MCP schemas and choose rollback-safe native operations', 'Design the production implementation for RemoteEvent/RemoteFunction schemas, authority, validation, rate limits and exploit tests with explicit server/client/editor ownership', 'Implement the real change in Studio without replacing existing architecture or explicit intent', 'Integrate gameplay, UI, animation, VFX, audio, persistence and platform behavior wherever connected', 'Exercise failure, interruption, exploit, respawn, reconnect, streaming and weakest-device cases where relevant', 'Run Edit/Server/Client evidence, inspect Output and profiler/network state, fix defects and read back final hierarchy'], 'qualityGates': ['Exact Roblox services, APIs, instance paths and ownership are verified before edits', 'Server authority and every client-controlled value are validated where consequential', 'Connections, tasks, instances, animations and resources have deterministic lifecycle cleanup', 'Streaming, respawn, teleport, reconnect and late-join behavior remain correct where relevant', 'Keyboard/mouse, touch and gamepad behavior is complete where relevant', 'Weak-device CPU, GPU, memory, network and loading budgets are measured', 'Studio Output and focused multi-client tests contain no unexplained failures', 'Final DataModel state and runtime evidence prove the requested result']}, 'ms_roblox_streaming_world_optimizer': {'description': 'Roblox Studio specialist for StreamingEnabled regions, persistent models, atomic content, preload priorities and seam recovery.', 'category': 'quality', 'stages': ['Define the requested player outcome and Roblox acceptance criteria for StreamingEnabled regions, persistent models, atomic content, preload priorities and seam recovery', 'Inspect the live DataModel, relevant scripts, services, remotes, assets, settings and current conventions', 'Read exact advertised Roblox Studio MCP schemas and choose rollback-safe native operations', 'Design the production implementation for StreamingEnabled regions, persistent models, atomic content, preload priorities and seam recovery with explicit server/client/editor ownership', 'Implement the real change in Studio without replacing existing architecture or explicit intent', 'Integrate gameplay, UI, animation, VFX, audio, persistence and platform behavior wherever connected', 'Exercise failure, interruption, exploit, respawn, reconnect, streaming and weakest-device cases where relevant', 'Run Edit/Server/Client evidence, inspect Output and profiler/network state, fix defects and read back final hierarchy'], 'qualityGates': ['Exact Roblox services, APIs, instance paths and ownership are verified before edits', 'Server authority and every client-controlled value are validated where consequential', 'Connections, tasks, instances, animations and resources have deterministic lifecycle cleanup', 'Streaming, respawn, teleport, reconnect and late-join behavior remain correct where relevant', 'Keyboard/mouse, touch and gamepad behavior is complete where relevant', 'Weak-device CPU, GPU, memory, network and loading budgets are measured', 'Studio Output and focused multi-client tests contain no unexplained failures', 'Final DataModel state and runtime evidence prove the requested result']}, 'ms_roblox_parallel_luau_planner': {'description': 'Roblox Studio specialist for Parallel Luau suitability, Actor boundaries, synchronization points, thread safety and measured speedup.', 'category': 'quality', 'stages': ['Define the requested player outcome and Roblox acceptance criteria for Parallel Luau suitability, Actor boundaries, synchronization points, thread safety and measured speedup', 'Inspect the live DataModel, relevant scripts, services, remotes, assets, settings and current conventions', 'Read exact advertised Roblox Studio MCP schemas and choose rollback-safe native operations', 'Design the production implementation for Parallel Luau suitability, Actor boundaries, synchronization points, thread safety and measured speedup with explicit server/client/editor ownership', 'Implement the real change in Studio without replacing existing architecture or explicit intent', 'Integrate gameplay, UI, animation, VFX, audio, persistence and platform behavior wherever connected', 'Exercise failure, interruption, exploit, respawn, reconnect, streaming and weakest-device cases where relevant', 'Run Edit/Server/Client evidence, inspect Output and profiler/network state, fix defects and read back final hierarchy'], 'qualityGates': ['Exact Roblox services, APIs, instance paths and ownership are verified before edits', 'Server authority and every client-controlled value are validated where consequential', 'Connections, tasks, instances, animations and resources have deterministic lifecycle cleanup', 'Streaming, respawn, teleport, reconnect and late-join behavior remain correct where relevant', 'Keyboard/mouse, touch and gamepad behavior is complete where relevant', 'Weak-device CPU, GPU, memory, network and loading budgets are measured', 'Studio Output and focused multi-client tests contain no unexplained failures', 'Final DataModel state and runtime evidence prove the requested result']}, 'ms_roblox_actor_partition_audit': {'description': 'Roblox Studio specialist for Actor partitioning, ownership, message flow, isolation, contention and deterministic fallback.', 'category': 'architecture', 'stages': ['Define the requested player outcome and Roblox acceptance criteria for Actor partitioning, ownership, message flow, isolation, contention and deterministic fallback', 'Inspect the live DataModel, relevant scripts, services, remotes, assets, settings and current conventions', 'Read exact advertised Roblox Studio MCP schemas and choose rollback-safe native operations', 'Design the production implementation for Actor partitioning, ownership, message flow, isolation, contention and deterministic fallback with explicit server/client/editor ownership', 'Implement the real change in Studio without replacing existing architecture or explicit intent', 'Integrate gameplay, UI, animation, VFX, audio, persistence and platform behavior wherever connected', 'Exercise failure, interruption, exploit, respawn, reconnect, streaming and weakest-device cases where relevant', 'Run Edit/Server/Client evidence, inspect Output and profiler/network state, fix defects and read back final hierarchy'], 'qualityGates': ['Exact Roblox services, APIs, instance paths and ownership are verified before edits', 'Server authority and every client-controlled value are validated where consequential', 'Connections, tasks, instances, animations and resources have deterministic lifecycle cleanup', 'Streaming, respawn, teleport, reconnect and late-join behavior remain correct where relevant', 'Keyboard/mouse, touch and gamepad behavior is complete where relevant', 'Weak-device CPU, GPU, memory, network and loading budgets are measured', 'Studio Output and focused multi-client tests contain no unexplained failures', 'Final DataModel state and runtime evidence prove the requested result']}, 'ms_roblox_datastore_resilience': {'description': 'Roblox Studio specialist for DataStore schemas, UpdateAsync transforms, session locks, migrations, retries, budgets and repair.', 'category': 'gameplay', 'stages': ['Define the requested player outcome and Roblox acceptance criteria for DataStore schemas, UpdateAsync transforms, session locks, migrations, retries, budgets and repair', 'Inspect the live DataModel, relevant scripts, services, remotes, assets, settings and current conventions', 'Read exact advertised Roblox Studio MCP schemas and choose rollback-safe native operations', 'Design the production implementation for DataStore schemas, UpdateAsync transforms, session locks, migrations, retries, budgets and repair with explicit server/client/editor ownership', 'Implement the real change in Studio without replacing existing architecture or explicit intent', 'Integrate gameplay, UI, animation, VFX, audio, persistence and platform behavior wherever connected', 'Exercise failure, interruption, exploit, respawn, reconnect, streaming and weakest-device cases where relevant', 'Run Edit/Server/Client evidence, inspect Output and profiler/network state, fix defects and read back final hierarchy'], 'qualityGates': ['Exact Roblox services, APIs, instance paths and ownership are verified before edits', 'Server authority and every client-controlled value are validated where consequential', 'Connections, tasks, instances, animations and resources have deterministic lifecycle cleanup', 'Streaming, respawn, teleport, reconnect and late-join behavior remain correct where relevant', 'Keyboard/mouse, touch and gamepad behavior is complete where relevant', 'Weak-device CPU, GPU, memory, network and loading budgets are measured', 'Studio Output and focused multi-client tests contain no unexplained failures', 'Final DataModel state and runtime evidence prove the requested result']}, 'ms_roblox_memory_store_coordination': {'description': 'Roblox Studio specialist for MemoryStore queues, maps, sorted maps, TTLs, idempotency, contention and degradation.', 'category': 'gameplay', 'stages': ['Define the requested player outcome and Roblox acceptance criteria for MemoryStore queues, maps, sorted maps, TTLs, idempotency, contention and degradation', 'Inspect the live DataModel, relevant scripts, services, remotes, assets, settings and current conventions', 'Read exact advertised Roblox Studio MCP schemas and choose rollback-safe native operations', 'Design the production implementation for MemoryStore queues, maps, sorted maps, TTLs, idempotency, contention and degradation with explicit server/client/editor ownership', 'Implement the real change in Studio without replacing existing architecture or explicit intent', 'Integrate gameplay, UI, animation, VFX, audio, persistence and platform behavior wherever connected', 'Exercise failure, interruption, exploit, respawn, reconnect, streaming and weakest-device cases where relevant', 'Run Edit/Server/Client evidence, inspect Output and profiler/network state, fix defects and read back final hierarchy'], 'qualityGates': ['Exact Roblox services, APIs, instance paths and ownership are verified before edits', 'Server authority and every client-controlled value are validated where consequential', 'Connections, tasks, instances, animations and resources have deterministic lifecycle cleanup', 'Streaming, respawn, teleport, reconnect and late-join behavior remain correct where relevant', 'Keyboard/mouse, touch and gamepad behavior is complete where relevant', 'Weak-device CPU, GPU, memory, network and loading budgets are measured', 'Studio Output and focused multi-client tests contain no unexplained failures', 'Final DataModel state and runtime evidence prove the requested result']}, 'ms_roblox_messaging_service_reliability': {'description': 'Roblox Studio specialist for MessagingService topics, deduplication, ordering, retry, payload limits and fallback.', 'category': 'gameplay', 'stages': ['Define the requested player outcome and Roblox acceptance criteria for MessagingService topics, deduplication, ordering, retry, payload limits and fallback', 'Inspect the live DataModel, relevant scripts, services, remotes, assets, settings and current conventions', 'Read exact advertised Roblox Studio MCP schemas and choose rollback-safe native operations', 'Design the production implementation for MessagingService topics, deduplication, ordering, retry, payload limits and fallback with explicit server/client/editor ownership', 'Implement the real change in Studio without replacing existing architecture or explicit intent', 'Integrate gameplay, UI, animation, VFX, audio, persistence and platform behavior wherever connected', 'Exercise failure, interruption, exploit, respawn, reconnect, streaming and weakest-device cases where relevant', 'Run Edit/Server/Client evidence, inspect Output and profiler/network state, fix defects and read back final hierarchy'], 'qualityGates': ['Exact Roblox services, APIs, instance paths and ownership are verified before edits', 'Server authority and every client-controlled value are validated where consequential', 'Connections, tasks, instances, animations and resources have deterministic lifecycle cleanup', 'Streaming, respawn, teleport, reconnect and late-join behavior remain correct where relevant', 'Keyboard/mouse, touch and gamepad behavior is complete where relevant', 'Weak-device CPU, GPU, memory, network and loading budgets are measured', 'Studio Output and focused multi-client tests contain no unexplained failures', 'Final DataModel state and runtime evidence prove the requested result']}, 'ms_roblox_character_pipeline': {'description': 'Roblox Studio specialist for R6/R15/custom rigs, Humanoid/AnimationController ownership, avatar scaling, accessories and respawn.', 'category': 'animation', 'stages': ['Define the requested player outcome and Roblox acceptance criteria for R6/R15/custom rigs, Humanoid/AnimationController ownership, avatar scaling, accessories and respawn', 'Inspect the live DataModel, relevant scripts, services, remotes, assets, settings and current conventions', 'Read exact advertised Roblox Studio MCP schemas and choose rollback-safe native operations', 'Design the production implementation for R6/R15/custom rigs, Humanoid/AnimationController ownership, avatar scaling, accessories and respawn with explicit server/client/editor ownership', 'Implement the real change in Studio without replacing existing architecture or explicit intent', 'Integrate gameplay, UI, animation, VFX, audio, persistence and platform behavior wherever connected', 'Exercise failure, interruption, exploit, respawn, reconnect, streaming and weakest-device cases where relevant', 'Run Edit/Server/Client evidence, inspect Output and profiler/network state, fix defects and read back final hierarchy'], 'qualityGates': ['Exact Roblox services, APIs, instance paths and ownership are verified before edits', 'Server authority and every client-controlled value are validated where consequential', 'Connections, tasks, instances, animations and resources have deterministic lifecycle cleanup', 'Streaming, respawn, teleport, reconnect and late-join behavior remain correct where relevant', 'Keyboard/mouse, touch and gamepad behavior is complete where relevant', 'Weak-device CPU, GPU, memory, network and loading budgets are measured', 'Studio Output and focused multi-client tests contain no unexplained failures', 'Final DataModel state and runtime evidence prove the requested result']}, 'ms_roblox_animation_runtime_pipeline': {'description': 'Roblox Studio specialist for Animator ownership, priorities, blending, markers, replication, interruption and cleanup.', 'category': 'animation', 'stages': ['Define the requested player outcome and Roblox acceptance criteria for Animator ownership, priorities, blending, markers, replication, interruption and cleanup', 'Inspect the live DataModel, relevant scripts, services, remotes, assets, settings and current conventions', 'Read exact advertised Roblox Studio MCP schemas and choose rollback-safe native operations', 'Design the production implementation for Animator ownership, priorities, blending, markers, replication, interruption and cleanup with explicit server/client/editor ownership', 'Implement the real change in Studio without replacing existing architecture or explicit intent', 'Integrate gameplay, UI, animation, VFX, audio, persistence and platform behavior wherever connected', 'Exercise failure, interruption, exploit, respawn, reconnect, streaming and weakest-device cases where relevant', 'Run Edit/Server/Client evidence, inspect Output and profiler/network state, fix defects and read back final hierarchy'], 'qualityGates': ['Exact Roblox services, APIs, instance paths and ownership are verified before edits', 'Server authority and every client-controlled value are validated where consequential', 'Connections, tasks, instances, animations and resources have deterministic lifecycle cleanup', 'Streaming, respawn, teleport, reconnect and late-join behavior remain correct where relevant', 'Keyboard/mouse, touch and gamepad behavior is complete where relevant', 'Weak-device CPU, GPU, memory, network and loading budgets are measured', 'Studio Output and focused multi-client tests contain no unexplained failures', 'Final DataModel state and runtime evidence prove the requested result']}, 'ms_roblox_ui_responsiveness_audit': {'description': 'Roblox Studio specialist for ScreenGui hierarchy, constraints, safe areas, text scaling, localization, states and navigation.', 'category': 'uiux', 'stages': ['Define the requested player outcome and Roblox acceptance criteria for ScreenGui hierarchy, constraints, safe areas, text scaling, localization, states and navigation', 'Inspect the live DataModel, relevant scripts, services, remotes, assets, settings and current conventions', 'Read exact advertised Roblox Studio MCP schemas and choose rollback-safe native operations', 'Design the production implementation for ScreenGui hierarchy, constraints, safe areas, text scaling, localization, states and navigation with explicit server/client/editor ownership', 'Implement the real change in Studio without replacing existing architecture or explicit intent', 'Integrate gameplay, UI, animation, VFX, audio, persistence and platform behavior wherever connected', 'Exercise failure, interruption, exploit, respawn, reconnect, streaming and weakest-device cases where relevant', 'Run Edit/Server/Client evidence, inspect Output and profiler/network state, fix defects and read back final hierarchy'], 'qualityGates': ['Exact Roblox services, APIs, instance paths and ownership are verified before edits', 'Server authority and every client-controlled value are validated where consequential', 'Connections, tasks, instances, animations and resources have deterministic lifecycle cleanup', 'Streaming, respawn, teleport, reconnect and late-join behavior remain correct where relevant', 'Keyboard/mouse, touch and gamepad behavior is complete where relevant', 'Weak-device CPU, GPU, memory, network and loading budgets are measured', 'Studio Output and focused multi-client tests contain no unexplained failures', 'Final DataModel state and runtime evidence prove the requested result']}, 'ms_roblox_mobile_input_polish': {'description': 'Roblox Studio specialist for touch controls, thumb reach, ContextActionService, gesture conflict, orientation and low-end devices.', 'category': 'uiux', 'stages': ['Define the requested player outcome and Roblox acceptance criteria for touch controls, thumb reach, ContextActionService, gesture conflict, orientation and low-end devices', 'Inspect the live DataModel, relevant scripts, services, remotes, assets, settings and current conventions', 'Read exact advertised Roblox Studio MCP schemas and choose rollback-safe native operations', 'Design the production implementation for touch controls, thumb reach, ContextActionService, gesture conflict, orientation and low-end devices with explicit server/client/editor ownership', 'Implement the real change in Studio without replacing existing architecture or explicit intent', 'Integrate gameplay, UI, animation, VFX, audio, persistence and platform behavior wherever connected', 'Exercise failure, interruption, exploit, respawn, reconnect, streaming and weakest-device cases where relevant', 'Run Edit/Server/Client evidence, inspect Output and profiler/network state, fix defects and read back final hierarchy'], 'qualityGates': ['Exact Roblox services, APIs, instance paths and ownership are verified before edits', 'Server authority and every client-controlled value are validated where consequential', 'Connections, tasks, instances, animations and resources have deterministic lifecycle cleanup', 'Streaming, respawn, teleport, reconnect and late-join behavior remain correct where relevant', 'Keyboard/mouse, touch and gamepad behavior is complete where relevant', 'Weak-device CPU, GPU, memory, network and loading budgets are measured', 'Studio Output and focused multi-client tests contain no unexplained failures', 'Final DataModel state and runtime evidence prove the requested result']}, 'ms_roblox_console_input_polish': {'description': 'Roblox Studio specialist for gamepad action maps, focus graph, prompts, ten-foot readability, disconnect and reconnect.', 'category': 'uiux', 'stages': ['Define the requested player outcome and Roblox acceptance criteria for gamepad action maps, focus graph, prompts, ten-foot readability, disconnect and reconnect', 'Inspect the live DataModel, relevant scripts, services, remotes, assets, settings and current conventions', 'Read exact advertised Roblox Studio MCP schemas and choose rollback-safe native operations', 'Design the production implementation for gamepad action maps, focus graph, prompts, ten-foot readability, disconnect and reconnect with explicit server/client/editor ownership', 'Implement the real change in Studio without replacing existing architecture or explicit intent', 'Integrate gameplay, UI, animation, VFX, audio, persistence and platform behavior wherever connected', 'Exercise failure, interruption, exploit, respawn, reconnect, streaming and weakest-device cases where relevant', 'Run Edit/Server/Client evidence, inspect Output and profiler/network state, fix defects and read back final hierarchy'], 'qualityGates': ['Exact Roblox services, APIs, instance paths and ownership are verified before edits', 'Server authority and every client-controlled value are validated where consequential', 'Connections, tasks, instances, animations and resources have deterministic lifecycle cleanup', 'Streaming, respawn, teleport, reconnect and late-join behavior remain correct where relevant', 'Keyboard/mouse, touch and gamepad behavior is complete where relevant', 'Weak-device CPU, GPU, memory, network and loading budgets are measured', 'Studio Output and focused multi-client tests contain no unexplained failures', 'Final DataModel state and runtime evidence prove the requested result']}, 'ms_roblox_vr_comfort_review': {'description': 'Roblox Studio specialist for VR scale, locomotion, comfort, interaction reach, seated/standing modes and frame budget.', 'category': 'gameplay', 'stages': ['Define the requested player outcome and Roblox acceptance criteria for VR scale, locomotion, comfort, interaction reach, seated/standing modes and frame budget', 'Inspect the live DataModel, relevant scripts, services, remotes, assets, settings and current conventions', 'Read exact advertised Roblox Studio MCP schemas and choose rollback-safe native operations', 'Design the production implementation for VR scale, locomotion, comfort, interaction reach, seated/standing modes and frame budget with explicit server/client/editor ownership', 'Implement the real change in Studio without replacing existing architecture or explicit intent', 'Integrate gameplay, UI, animation, VFX, audio, persistence and platform behavior wherever connected', 'Exercise failure, interruption, exploit, respawn, reconnect, streaming and weakest-device cases where relevant', 'Run Edit/Server/Client evidence, inspect Output and profiler/network state, fix defects and read back final hierarchy'], 'qualityGates': ['Exact Roblox services, APIs, instance paths and ownership are verified before edits', 'Server authority and every client-controlled value are validated where consequential', 'Connections, tasks, instances, animations and resources have deterministic lifecycle cleanup', 'Streaming, respawn, teleport, reconnect and late-join behavior remain correct where relevant', 'Keyboard/mouse, touch and gamepad behavior is complete where relevant', 'Weak-device CPU, GPU, memory, network and loading budgets are measured', 'Studio Output and focused multi-client tests contain no unexplained failures', 'Final DataModel state and runtime evidence prove the requested result']}, 'ms_roblox_physics_network_ownership': {'description': 'Roblox Studio specialist for assemblies, constraints, collision groups, network ownership, reconciliation and exploit resistance.', 'category': 'gameplay', 'stages': ['Define the requested player outcome and Roblox acceptance criteria for assemblies, constraints, collision groups, network ownership, reconciliation and exploit resistance', 'Inspect the live DataModel, relevant scripts, services, remotes, assets, settings and current conventions', 'Read exact advertised Roblox Studio MCP schemas and choose rollback-safe native operations', 'Design the production implementation for assemblies, constraints, collision groups, network ownership, reconciliation and exploit resistance with explicit server/client/editor ownership', 'Implement the real change in Studio without replacing existing architecture or explicit intent', 'Integrate gameplay, UI, animation, VFX, audio, persistence and platform behavior wherever connected', 'Exercise failure, interruption, exploit, respawn, reconnect, streaming and weakest-device cases where relevant', 'Run Edit/Server/Client evidence, inspect Output and profiler/network state, fix defects and read back final hierarchy'], 'qualityGates': ['Exact Roblox services, APIs, instance paths and ownership are verified before edits', 'Server authority and every client-controlled value are validated where consequential', 'Connections, tasks, instances, animations and resources have deterministic lifecycle cleanup', 'Streaming, respawn, teleport, reconnect and late-join behavior remain correct where relevant', 'Keyboard/mouse, touch and gamepad behavior is complete where relevant', 'Weak-device CPU, GPU, memory, network and loading budgets are measured', 'Studio Output and focused multi-client tests contain no unexplained failures', 'Final DataModel state and runtime evidence prove the requested result']}, 'ms_roblox_pathfinding_npc_scale': {'description': 'Roblox Studio specialist for PathfindingService costs, nav modifiers, blocked recovery, crowd coordination and simulation LOD.', 'category': 'gameplay', 'stages': ['Define the requested player outcome and Roblox acceptance criteria for PathfindingService costs, nav modifiers, blocked recovery, crowd coordination and simulation LOD', 'Inspect the live DataModel, relevant scripts, services, remotes, assets, settings and current conventions', 'Read exact advertised Roblox Studio MCP schemas and choose rollback-safe native operations', 'Design the production implementation for PathfindingService costs, nav modifiers, blocked recovery, crowd coordination and simulation LOD with explicit server/client/editor ownership', 'Implement the real change in Studio without replacing existing architecture or explicit intent', 'Integrate gameplay, UI, animation, VFX, audio, persistence and platform behavior wherever connected', 'Exercise failure, interruption, exploit, respawn, reconnect, streaming and weakest-device cases where relevant', 'Run Edit/Server/Client evidence, inspect Output and profiler/network state, fix defects and read back final hierarchy'], 'qualityGates': ['Exact Roblox services, APIs, instance paths and ownership are verified before edits', 'Server authority and every client-controlled value are validated where consequential', 'Connections, tasks, instances, animations and resources have deterministic lifecycle cleanup', 'Streaming, respawn, teleport, reconnect and late-join behavior remain correct where relevant', 'Keyboard/mouse, touch and gamepad behavior is complete where relevant', 'Weak-device CPU, GPU, memory, network and loading budgets are measured', 'Studio Output and focused multi-client tests contain no unexplained failures', 'Final DataModel state and runtime evidence prove the requested result']}, 'ms_roblox_microprofiler_optimization': {'description': 'Roblox Studio specialist for MicroProfiler labels, CPU frame decomposition, scheduler pressure, spikes and before/after captures.', 'category': 'quality', 'stages': ['Define the requested player outcome and Roblox acceptance criteria for MicroProfiler labels, CPU frame decomposition, scheduler pressure, spikes and before/after captures', 'Inspect the live DataModel, relevant scripts, services, remotes, assets, settings and current conventions', 'Read exact advertised Roblox Studio MCP schemas and choose rollback-safe native operations', 'Design the production implementation for MicroProfiler labels, CPU frame decomposition, scheduler pressure, spikes and before/after captures with explicit server/client/editor ownership', 'Implement the real change in Studio without replacing existing architecture or explicit intent', 'Integrate gameplay, UI, animation, VFX, audio, persistence and platform behavior wherever connected', 'Exercise failure, interruption, exploit, respawn, reconnect, streaming and weakest-device cases where relevant', 'Run Edit/Server/Client evidence, inspect Output and profiler/network state, fix defects and read back final hierarchy'], 'qualityGates': ['Exact Roblox services, APIs, instance paths and ownership are verified before edits', 'Server authority and every client-controlled value are validated where consequential', 'Connections, tasks, instances, animations and resources have deterministic lifecycle cleanup', 'Streaming, respawn, teleport, reconnect and late-join behavior remain correct where relevant', 'Keyboard/mouse, touch and gamepad behavior is complete where relevant', 'Weak-device CPU, GPU, memory, network and loading budgets are measured', 'Studio Output and focused multi-client tests contain no unexplained failures', 'Final DataModel state and runtime evidence prove the requested result']}, 'ms_roblox_render_budget_audit': {'description': 'Roblox Studio specialist for parts, meshes, materials, transparency, lights, particles, draw pressure and device tiers.', 'category': 'art3d', 'stages': ['Define the requested player outcome and Roblox acceptance criteria for parts, meshes, materials, transparency, lights, particles, draw pressure and device tiers', 'Inspect the live DataModel, relevant scripts, services, remotes, assets, settings and current conventions', 'Read exact advertised Roblox Studio MCP schemas and choose rollback-safe native operations', 'Design the production implementation for parts, meshes, materials, transparency, lights, particles, draw pressure and device tiers with explicit server/client/editor ownership', 'Implement the real change in Studio without replacing existing architecture or explicit intent', 'Integrate gameplay, UI, animation, VFX, audio, persistence and platform behavior wherever connected', 'Exercise failure, interruption, exploit, respawn, reconnect, streaming and weakest-device cases where relevant', 'Run Edit/Server/Client evidence, inspect Output and profiler/network state, fix defects and read back final hierarchy'], 'qualityGates': ['Exact Roblox services, APIs, instance paths and ownership are verified before edits', 'Server authority and every client-controlled value are validated where consequential', 'Connections, tasks, instances, animations and resources have deterministic lifecycle cleanup', 'Streaming, respawn, teleport, reconnect and late-join behavior remain correct where relevant', 'Keyboard/mouse, touch and gamepad behavior is complete where relevant', 'Weak-device CPU, GPU, memory, network and loading budgets are measured', 'Studio Output and focused multi-client tests contain no unexplained failures', 'Final DataModel state and runtime evidence prove the requested result']}, 'ms_roblox_asset_delivery_pipeline': {'description': 'Roblox Studio specialist for asset ownership, import validation, moderation states, preload, fallbacks, memory and versioning.', 'category': 'art3d', 'stages': ['Define the requested player outcome and Roblox acceptance criteria for asset ownership, import validation, moderation states, preload, fallbacks, memory and versioning', 'Inspect the live DataModel, relevant scripts, services, remotes, assets, settings and current conventions', 'Read exact advertised Roblox Studio MCP schemas and choose rollback-safe native operations', 'Design the production implementation for asset ownership, import validation, moderation states, preload, fallbacks, memory and versioning with explicit server/client/editor ownership', 'Implement the real change in Studio without replacing existing architecture or explicit intent', 'Integrate gameplay, UI, animation, VFX, audio, persistence and platform behavior wherever connected', 'Exercise failure, interruption, exploit, respawn, reconnect, streaming and weakest-device cases where relevant', 'Run Edit/Server/Client evidence, inspect Output and profiler/network state, fix defects and read back final hierarchy'], 'qualityGates': ['Exact Roblox services, APIs, instance paths and ownership are verified before edits', 'Server authority and every client-controlled value are validated where consequential', 'Connections, tasks, instances, animations and resources have deterministic lifecycle cleanup', 'Streaming, respawn, teleport, reconnect and late-join behavior remain correct where relevant', 'Keyboard/mouse, touch and gamepad behavior is complete where relevant', 'Weak-device CPU, GPU, memory, network and loading budgets are measured', 'Studio Output and focused multi-client tests contain no unexplained failures', 'Final DataModel state and runtime evidence prove the requested result']}, 'ms_roblox_liveops_rollout': {'description': 'Roblox Studio specialist for server-authoritative config, events, staged rollout, kill switches, telemetry and rollback.', 'category': 'gameplay', 'stages': ['Define the requested player outcome and Roblox acceptance criteria for server-authoritative config, events, staged rollout, kill switches, telemetry and rollback', 'Inspect the live DataModel, relevant scripts, services, remotes, assets, settings and current conventions', 'Read exact advertised Roblox Studio MCP schemas and choose rollback-safe native operations', 'Design the production implementation for server-authoritative config, events, staged rollout, kill switches, telemetry and rollback with explicit server/client/editor ownership', 'Implement the real change in Studio without replacing existing architecture or explicit intent', 'Integrate gameplay, UI, animation, VFX, audio, persistence and platform behavior wherever connected', 'Exercise failure, interruption, exploit, respawn, reconnect, streaming and weakest-device cases where relevant', 'Run Edit/Server/Client evidence, inspect Output and profiler/network state, fix defects and read back final hierarchy'], 'qualityGates': ['Exact Roblox services, APIs, instance paths and ownership are verified before edits', 'Server authority and every client-controlled value are validated where consequential', 'Connections, tasks, instances, animations and resources have deterministic lifecycle cleanup', 'Streaming, respawn, teleport, reconnect and late-join behavior remain correct where relevant', 'Keyboard/mouse, touch and gamepad behavior is complete where relevant', 'Weak-device CPU, GPU, memory, network and loading budgets are measured', 'Studio Output and focused multi-client tests contain no unexplained failures', 'Final DataModel state and runtime evidence prove the requested result']}, 'ms_roblox_monetization_integrity': {'description': 'Roblox Studio specialist for MarketplaceService receipts, entitlements, idempotent grants, regional rules and recovery.', 'category': 'gameplay', 'stages': ['Define the requested player outcome and Roblox acceptance criteria for MarketplaceService receipts, entitlements, idempotent grants, regional rules and recovery', 'Inspect the live DataModel, relevant scripts, services, remotes, assets, settings and current conventions', 'Read exact advertised Roblox Studio MCP schemas and choose rollback-safe native operations', 'Design the production implementation for MarketplaceService receipts, entitlements, idempotent grants, regional rules and recovery with explicit server/client/editor ownership', 'Implement the real change in Studio without replacing existing architecture or explicit intent', 'Integrate gameplay, UI, animation, VFX, audio, persistence and platform behavior wherever connected', 'Exercise failure, interruption, exploit, respawn, reconnect, streaming and weakest-device cases where relevant', 'Run Edit/Server/Client evidence, inspect Output and profiler/network state, fix defects and read back final hierarchy'], 'qualityGates': ['Exact Roblox services, APIs, instance paths and ownership are verified before edits', 'Server authority and every client-controlled value are validated where consequential', 'Connections, tasks, instances, animations and resources have deterministic lifecycle cleanup', 'Streaming, respawn, teleport, reconnect and late-join behavior remain correct where relevant', 'Keyboard/mouse, touch and gamepad behavior is complete where relevant', 'Weak-device CPU, GPU, memory, network and loading budgets are measured', 'Studio Output and focused multi-client tests contain no unexplained failures', 'Final DataModel state and runtime evidence prove the requested result']}, 'ms_roblox_localization_pipeline': {'description': 'Roblox Studio specialist for LocalizationService keys, translators, fonts, expansion, RTL resilience and locale QA.', 'category': 'uiux', 'stages': ['Define the requested player outcome and Roblox acceptance criteria for LocalizationService keys, translators, fonts, expansion, RTL resilience and locale QA', 'Inspect the live DataModel, relevant scripts, services, remotes, assets, settings and current conventions', 'Read exact advertised Roblox Studio MCP schemas and choose rollback-safe native operations', 'Design the production implementation for LocalizationService keys, translators, fonts, expansion, RTL resilience and locale QA with explicit server/client/editor ownership', 'Implement the real change in Studio without replacing existing architecture or explicit intent', 'Integrate gameplay, UI, animation, VFX, audio, persistence and platform behavior wherever connected', 'Exercise failure, interruption, exploit, respawn, reconnect, streaming and weakest-device cases where relevant', 'Run Edit/Server/Client evidence, inspect Output and profiler/network state, fix defects and read back final hierarchy'], 'qualityGates': ['Exact Roblox services, APIs, instance paths and ownership are verified before edits', 'Server authority and every client-controlled value are validated where consequential', 'Connections, tasks, instances, animations and resources have deterministic lifecycle cleanup', 'Streaming, respawn, teleport, reconnect and late-join behavior remain correct where relevant', 'Keyboard/mouse, touch and gamepad behavior is complete where relevant', 'Weak-device CPU, GPU, memory, network and loading budgets are measured', 'Studio Output and focused multi-client tests contain no unexplained failures', 'Final DataModel state and runtime evidence prove the requested result']}, 'ms_roblox_accessibility_playtest': {'description': 'Roblox Studio specialist for input alternatives, contrast, text, motion, audio cues, cognitive load and device testing.', 'category': 'quality', 'stages': ['Define the requested player outcome and Roblox acceptance criteria for input alternatives, contrast, text, motion, audio cues, cognitive load and device testing', 'Inspect the live DataModel, relevant scripts, services, remotes, assets, settings and current conventions', 'Read exact advertised Roblox Studio MCP schemas and choose rollback-safe native operations', 'Design the production implementation for input alternatives, contrast, text, motion, audio cues, cognitive load and device testing with explicit server/client/editor ownership', 'Implement the real change in Studio without replacing existing architecture or explicit intent', 'Integrate gameplay, UI, animation, VFX, audio, persistence and platform behavior wherever connected', 'Exercise failure, interruption, exploit, respawn, reconnect, streaming and weakest-device cases where relevant', 'Run Edit/Server/Client evidence, inspect Output and profiler/network state, fix defects and read back final hierarchy'], 'qualityGates': ['Exact Roblox services, APIs, instance paths and ownership are verified before edits', 'Server authority and every client-controlled value are validated where consequential', 'Connections, tasks, instances, animations and resources have deterministic lifecycle cleanup', 'Streaming, respawn, teleport, reconnect and late-join behavior remain correct where relevant', 'Keyboard/mouse, touch and gamepad behavior is complete where relevant', 'Weak-device CPU, GPU, memory, network and loading budgets are measured', 'Studio Output and focused multi-client tests contain no unexplained failures', 'Final DataModel state and runtime evidence prove the requested result']}, 'ms_roblox_multi_client_test_director': {'description': 'Roblox Studio specialist for Studio server/client matrix, latency, reconnect, authority conflicts, persistence and clean Output.', 'category': 'quality', 'stages': ['Define the requested player outcome and Roblox acceptance criteria for Studio server/client matrix, latency, reconnect, authority conflicts, persistence and clean Output', 'Inspect the live DataModel, relevant scripts, services, remotes, assets, settings and current conventions', 'Read exact advertised Roblox Studio MCP schemas and choose rollback-safe native operations', 'Design the production implementation for Studio server/client matrix, latency, reconnect, authority conflicts, persistence and clean Output with explicit server/client/editor ownership', 'Implement the real change in Studio without replacing existing architecture or explicit intent', 'Integrate gameplay, UI, animation, VFX, audio, persistence and platform behavior wherever connected', 'Exercise failure, interruption, exploit, respawn, reconnect, streaming and weakest-device cases where relevant', 'Run Edit/Server/Client evidence, inspect Output and profiler/network state, fix defects and read back final hierarchy'], 'qualityGates': ['Exact Roblox services, APIs, instance paths and ownership are verified before edits', 'Server authority and every client-controlled value are validated where consequential', 'Connections, tasks, instances, animations and resources have deterministic lifecycle cleanup', 'Streaming, respawn, teleport, reconnect and late-join behavior remain correct where relevant', 'Keyboard/mouse, touch and gamepad behavior is complete where relevant', 'Weak-device CPU, GPU, memory, network and loading budgets are measured', 'Studio Output and focused multi-client tests contain no unexplained failures', 'Final DataModel state and runtime evidence prove the requested result']}}
 ADVANCED_DIRECT_CONTRACTS.update(ROBLOX_STUDIO_V3_CONTRACTS)
-ENGINE_PRO_V3_CONTRACTS = {'ms_unity_dots_ecs_architecture': {'description': 'Unity specialist for DOTS/ECS worlds, systems, bakers, jobs, Burst safety and structural-change budgets.', 'category': 'quality', 'engine': 'unity', 'stages': ['Define the requested result and acceptance criteria for DOTS/ECS worlds, systems, bakers, jobs, Burst safety and structural-change budgets', 'Inspect the live project, dependencies, settings, assets and established conventions', 'Read exact advertised native tool schemas and select rollback-safe operations', 'Design ownership, data flow, lifecycle, error handling and target-platform budgets', 'Implement the real project change through live native tools while preserving explicit requirements', 'Integrate connected gameplay, UI, animation, VFX, audio, content and build behavior', 'Exercise failure, interruption, migration, compatibility and weakest-device cases', 'Run native tests and profiler evidence, inspect logs, read back final project state and fix defects'], 'qualityGates': ['Exact project paths, APIs, versions and ownership are verified', 'The result exists in the real project rather than only as advice', 'Lifecycle, cleanup, interruption and failure recovery are deterministic', 'Inputs, persistence and network authority are validated where consequential', 'Connected disciplines and target platforms remain coherent', 'CPU, GPU, memory, loading and network budgets are measured where relevant', 'Native tests and logs contain no unexplained failures', 'Final state read-back and evidence prove the requested outcome']}, 'ms_unity_addressables_delivery': {'description': 'Unity specialist for Addressables groups, dependency duplication, remote catalogs, memory, preload and rollback.', 'category': 'quality', 'engine': 'unity', 'stages': ['Define the requested result and acceptance criteria for Addressables groups, dependency duplication, remote catalogs, memory, preload and rollback', 'Inspect the live project, dependencies, settings, assets and established conventions', 'Read exact advertised native tool schemas and select rollback-safe operations', 'Design ownership, data flow, lifecycle, error handling and target-platform budgets', 'Implement the real project change through live native tools while preserving explicit requirements', 'Integrate connected gameplay, UI, animation, VFX, audio, content and build behavior', 'Exercise failure, interruption, migration, compatibility and weakest-device cases', 'Run native tests and profiler evidence, inspect logs, read back final project state and fix defects'], 'qualityGates': ['Exact project paths, APIs, versions and ownership are verified', 'The result exists in the real project rather than only as advice', 'Lifecycle, cleanup, interruption and failure recovery are deterministic', 'Inputs, persistence and network authority are validated where consequential', 'Connected disciplines and target platforms remain coherent', 'CPU, GPU, memory, loading and network budgets are measured where relevant', 'Native tests and logs contain no unexplained failures', 'Final state read-back and evidence prove the requested outcome']}, 'ms_unity_render_pipeline_profiler': {'description': 'Unity specialist for URP/HDRP rendering, SRP Batcher, overdraw, shader variants and GPU captures.', 'category': 'quality', 'engine': 'unity', 'stages': ['Define the requested result and acceptance criteria for URP/HDRP rendering, SRP Batcher, overdraw, shader variants and GPU captures', 'Inspect the live project, dependencies, settings, assets and established conventions', 'Read exact advertised native tool schemas and select rollback-safe operations', 'Design ownership, data flow, lifecycle, error handling and target-platform budgets', 'Implement the real project change through live native tools while preserving explicit requirements', 'Integrate connected gameplay, UI, animation, VFX, audio, content and build behavior', 'Exercise failure, interruption, migration, compatibility and weakest-device cases', 'Run native tests and profiler evidence, inspect logs, read back final project state and fix defects'], 'qualityGates': ['Exact project paths, APIs, versions and ownership are verified', 'The result exists in the real project rather than only as advice', 'Lifecycle, cleanup, interruption and failure recovery are deterministic', 'Inputs, persistence and network authority are validated where consequential', 'Connected disciplines and target platforms remain coherent', 'CPU, GPU, memory, loading and network budgets are measured where relevant', 'Native tests and logs contain no unexplained failures', 'Final state read-back and evidence prove the requested outcome']}, 'ms_unity_netcode_authority': {'description': 'Unity specialist for Netcode authority, prediction, reconciliation, RPC validation and bandwidth.', 'category': 'quality', 'engine': 'unity', 'stages': ['Define the requested result and acceptance criteria for Netcode authority, prediction, reconciliation, RPC validation and bandwidth', 'Inspect the live project, dependencies, settings, assets and established conventions', 'Read exact advertised native tool schemas and select rollback-safe operations', 'Design ownership, data flow, lifecycle, error handling and target-platform budgets', 'Implement the real project change through live native tools while preserving explicit requirements', 'Integrate connected gameplay, UI, animation, VFX, audio, content and build behavior', 'Exercise failure, interruption, migration, compatibility and weakest-device cases', 'Run native tests and profiler evidence, inspect logs, read back final project state and fix defects'], 'qualityGates': ['Exact project paths, APIs, versions and ownership are verified', 'The result exists in the real project rather than only as advice', 'Lifecycle, cleanup, interruption and failure recovery are deterministic', 'Inputs, persistence and network authority are validated where consequential', 'Connected disciplines and target platforms remain coherent', 'CPU, GPU, memory, loading and network budgets are measured where relevant', 'Native tests and logs contain no unexplained failures', 'Final state read-back and evidence prove the requested outcome']}, 'ms_godot_scene_signal_architecture': {'description': 'Godot specialist for scene composition, ownership, signals, autoload boundaries and typed GDScript contracts.', 'category': 'quality', 'engine': 'godot', 'stages': ['Define the requested result and acceptance criteria for scene composition, ownership, signals, autoload boundaries and typed GDScript contracts', 'Inspect the live project, dependencies, settings, assets and established conventions', 'Read exact advertised native tool schemas and select rollback-safe operations', 'Design ownership, data flow, lifecycle, error handling and target-platform budgets', 'Implement the real project change through live native tools while preserving explicit requirements', 'Integrate connected gameplay, UI, animation, VFX, audio, content and build behavior', 'Exercise failure, interruption, migration, compatibility and weakest-device cases', 'Run native tests and profiler evidence, inspect logs, read back final project state and fix defects'], 'qualityGates': ['Exact project paths, APIs, versions and ownership are verified', 'The result exists in the real project rather than only as advice', 'Lifecycle, cleanup, interruption and failure recovery are deterministic', 'Inputs, persistence and network authority are validated where consequential', 'Connected disciplines and target platforms remain coherent', 'CPU, GPU, memory, loading and network budgets are measured where relevant', 'Native tests and logs contain no unexplained failures', 'Final state read-back and evidence prove the requested outcome']}, 'ms_godot_resource_save_pipeline': {'description': 'Godot specialist for Resource schemas, persistence, migrations, import identity and deterministic recovery.', 'category': 'quality', 'engine': 'godot', 'stages': ['Define the requested result and acceptance criteria for Resource schemas, persistence, migrations, import identity and deterministic recovery', 'Inspect the live project, dependencies, settings, assets and established conventions', 'Read exact advertised native tool schemas and select rollback-safe operations', 'Design ownership, data flow, lifecycle, error handling and target-platform budgets', 'Implement the real project change through live native tools while preserving explicit requirements', 'Integrate connected gameplay, UI, animation, VFX, audio, content and build behavior', 'Exercise failure, interruption, migration, compatibility and weakest-device cases', 'Run native tests and profiler evidence, inspect logs, read back final project state and fix defects'], 'qualityGates': ['Exact project paths, APIs, versions and ownership are verified', 'The result exists in the real project rather than only as advice', 'Lifecycle, cleanup, interruption and failure recovery are deterministic', 'Inputs, persistence and network authority are validated where consequential', 'Connected disciplines and target platforms remain coherent', 'CPU, GPU, memory, loading and network budgets are measured where relevant', 'Native tests and logs contain no unexplained failures', 'Final state read-back and evidence prove the requested outcome']}, 'ms_godot_rendering_profiler': {'description': 'Godot specialist for Forward+/Mobile/Compatibility rendering, shaders, draw calls, overdraw and frame captures.', 'category': 'quality', 'engine': 'godot', 'stages': ['Define the requested result and acceptance criteria for Forward+/Mobile/Compatibility rendering, shaders, draw calls, overdraw and frame captures', 'Inspect the live project, dependencies, settings, assets and established conventions', 'Read exact advertised native tool schemas and select rollback-safe operations', 'Design ownership, data flow, lifecycle, error handling and target-platform budgets', 'Implement the real project change through live native tools while preserving explicit requirements', 'Integrate connected gameplay, UI, animation, VFX, audio, content and build behavior', 'Exercise failure, interruption, migration, compatibility and weakest-device cases', 'Run native tests and profiler evidence, inspect logs, read back final project state and fix defects'], 'qualityGates': ['Exact project paths, APIs, versions and ownership are verified', 'The result exists in the real project rather than only as advice', 'Lifecycle, cleanup, interruption and failure recovery are deterministic', 'Inputs, persistence and network authority are validated where consequential', 'Connected disciplines and target platforms remain coherent', 'CPU, GPU, memory, loading and network budgets are measured where relevant', 'Native tests and logs contain no unexplained failures', 'Final state read-back and evidence prove the requested outcome']}, 'ms_godot_multiplayer_authority': {'description': 'Godot specialist for multiplayer authority, RPC modes, synchronization, validation, latency and reconnect.', 'category': 'quality', 'engine': 'godot', 'stages': ['Define the requested result and acceptance criteria for multiplayer authority, RPC modes, synchronization, validation, latency and reconnect', 'Inspect the live project, dependencies, settings, assets and established conventions', 'Read exact advertised native tool schemas and select rollback-safe operations', 'Design ownership, data flow, lifecycle, error handling and target-platform budgets', 'Implement the real project change through live native tools while preserving explicit requirements', 'Integrate connected gameplay, UI, animation, VFX, audio, content and build behavior', 'Exercise failure, interruption, migration, compatibility and weakest-device cases', 'Run native tests and profiler evidence, inspect logs, read back final project state and fix defects'], 'qualityGates': ['Exact project paths, APIs, versions and ownership are verified', 'The result exists in the real project rather than only as advice', 'Lifecycle, cleanup, interruption and failure recovery are deterministic', 'Inputs, persistence and network authority are validated where consequential', 'Connected disciplines and target platforms remain coherent', 'CPU, GPU, memory, loading and network budgets are measured where relevant', 'Native tests and logs contain no unexplained failures', 'Final state read-back and evidence prove the requested outcome']}, 'ms_blender_topology_modifier_pipeline': {'description': 'Blender specialist for production topology, modifiers, normals, UVs, LODs and non-destructive handoff.', 'category': 'quality', 'engine': 'blender', 'stages': ['Define the requested result and acceptance criteria for production topology, modifiers, normals, UVs, LODs and non-destructive handoff', 'Inspect the live project, dependencies, settings, assets and established conventions', 'Read exact advertised native tool schemas and select rollback-safe operations', 'Design ownership, data flow, lifecycle, error handling and target-platform budgets', 'Implement the real project change through live native tools while preserving explicit requirements', 'Integrate connected gameplay, UI, animation, VFX, audio, content and build behavior', 'Exercise failure, interruption, migration, compatibility and weakest-device cases', 'Run native tests and profiler evidence, inspect logs, read back final project state and fix defects'], 'qualityGates': ['Exact project paths, APIs, versions and ownership are verified', 'The result exists in the real project rather than only as advice', 'Lifecycle, cleanup, interruption and failure recovery are deterministic', 'Inputs, persistence and network authority are validated where consequential', 'Connected disciplines and target platforms remain coherent', 'CPU, GPU, memory, loading and network budgets are measured where relevant', 'Native tests and logs contain no unexplained failures', 'Final state read-back and evidence prove the requested outcome']}, 'ms_blender_geometry_nodes_pipeline': {'description': 'Blender specialist for Geometry Nodes interfaces, fields, simulation, instances, determinism and performance.', 'category': 'quality', 'engine': 'blender', 'stages': ['Define the requested result and acceptance criteria for Geometry Nodes interfaces, fields, simulation, instances, determinism and performance', 'Inspect the live project, dependencies, settings, assets and established conventions', 'Read exact advertised native tool schemas and select rollback-safe operations', 'Design ownership, data flow, lifecycle, error handling and target-platform budgets', 'Implement the real project change through live native tools while preserving explicit requirements', 'Integrate connected gameplay, UI, animation, VFX, audio, content and build behavior', 'Exercise failure, interruption, migration, compatibility and weakest-device cases', 'Run native tests and profiler evidence, inspect logs, read back final project state and fix defects'], 'qualityGates': ['Exact project paths, APIs, versions and ownership are verified', 'The result exists in the real project rather than only as advice', 'Lifecycle, cleanup, interruption and failure recovery are deterministic', 'Inputs, persistence and network authority are validated where consequential', 'Connected disciplines and target platforms remain coherent', 'CPU, GPU, memory, loading and network budgets are measured where relevant', 'Native tests and logs contain no unexplained failures', 'Final state read-back and evidence prove the requested outcome']}, 'ms_blender_rig_animation_pipeline': {'description': 'Blender specialist for rig hierarchy, deformation, controls, actions, NLA, retargeting and export.', 'category': 'quality', 'engine': 'blender', 'stages': ['Define the requested result and acceptance criteria for rig hierarchy, deformation, controls, actions, NLA, retargeting and export', 'Inspect the live project, dependencies, settings, assets and established conventions', 'Read exact advertised native tool schemas and select rollback-safe operations', 'Design ownership, data flow, lifecycle, error handling and target-platform budgets', 'Implement the real project change through live native tools while preserving explicit requirements', 'Integrate connected gameplay, UI, animation, VFX, audio, content and build behavior', 'Exercise failure, interruption, migration, compatibility and weakest-device cases', 'Run native tests and profiler evidence, inspect logs, read back final project state and fix defects'], 'qualityGates': ['Exact project paths, APIs, versions and ownership are verified', 'The result exists in the real project rather than only as advice', 'Lifecycle, cleanup, interruption and failure recovery are deterministic', 'Inputs, persistence and network authority are validated where consequential', 'Connected disciplines and target platforms remain coherent', 'CPU, GPU, memory, loading and network budgets are measured where relevant', 'Native tests and logs contain no unexplained failures', 'Final state read-back and evidence prove the requested outcome']}, 'ms_blender_render_color_pipeline': {'description': 'Blender specialist for Cycles/Eevee lighting, materials, sampling, color management, compositing and render budgets.', 'category': 'quality', 'engine': 'blender', 'stages': ['Define the requested result and acceptance criteria for Cycles/Eevee lighting, materials, sampling, color management, compositing and render budgets', 'Inspect the live project, dependencies, settings, assets and established conventions', 'Read exact advertised native tool schemas and select rollback-safe operations', 'Design ownership, data flow, lifecycle, error handling and target-platform budgets', 'Implement the real project change through live native tools while preserving explicit requirements', 'Integrate connected gameplay, UI, animation, VFX, audio, content and build behavior', 'Exercise failure, interruption, migration, compatibility and weakest-device cases', 'Run native tests and profiler evidence, inspect logs, read back final project state and fix defects'], 'qualityGates': ['Exact project paths, APIs, versions and ownership are verified', 'The result exists in the real project rather than only as advice', 'Lifecycle, cleanup, interruption and failure recovery are deterministic', 'Inputs, persistence and network authority are validated where consequential', 'Connected disciplines and target platforms remain coherent', 'CPU, GPU, memory, loading and network budgets are measured where relevant', 'Native tests and logs contain no unexplained failures', 'Final state read-back and evidence prove the requested outcome']}}
+ENGINE_PRO_V3_CONTRACTS = {'ms_unity_dots_ecs_architecture': {'description': 'Unity specialist for DOTS/ECS worlds, systems, bakers, jobs, Burst safety and structural-change budgets.', 'category': 'quality', 'engine': 'unity', 'stages': ['Define the requested result and acceptance criteria for DOTS/ECS worlds, systems, bakers, jobs, Burst safety and structural-change budgets', 'Inspect the live project, dependencies, settings, assets and established conventions', 'Read exact advertised native tool schemas and select rollback-safe operations', 'Design ownership, data flow, lifecycle, error handling and target-platform budgets', 'Implement the real project change through live native tools while preserving explicit requirements', 'Integrate connected gameplay, UI, animation, VFX, audio, content and build behavior', 'Exercise failure, interruption, migration, compatibility and weakest-device cases', 'Run native tests and profiler evidence, inspect logs, read back final project state and fix defects'], 'qualityGates': ['Exact project paths, APIs, versions and ownership are verified', 'The result exists in the real project rather than only as advice', 'Lifecycle, cleanup, interruption and failure recovery are deterministic', 'Inputs, persistence and network authority are validated where consequential', 'Connected disciplines and target platforms remain coherent', 'CPU, GPU, memory, loading and network budgets are measured where relevant', 'Native tests and logs contain no unexplained failures', 'Final state read-back and evidence prove the requested outcome']}, 'ms_unity_addressables_delivery': {'description': 'Unity specialist for Addressables groups, dependency duplication, remote catalogs, memory, preload and rollback.', 'category': 'quality', 'engine': 'unity', 'stages': ['Define the requested result and acceptance criteria for Addressables groups, dependency duplication, remote catalogs, memory, preload and rollback', 'Inspect the live project, dependencies, settings, assets and established conventions', 'Read exact advertised native tool schemas and select rollback-safe operations', 'Design ownership, data flow, lifecycle, error handling and target-platform budgets', 'Implement the real project change through live native tools while preserving explicit requirements', 'Integrate connected gameplay, UI, animation, VFX, audio, content and build behavior', 'Exercise failure, interruption, migration, compatibility and weakest-device cases', 'Run native tests and profiler evidence, inspect logs, read back final project state and fix defects'], 'qualityGates': ['Exact project paths, APIs, versions and ownership are verified', 'The result exists in the real project rather than only as advice', 'Lifecycle, cleanup, interruption and failure recovery are deterministic', 'Inputs, persistence and network authority are validated where consequential', 'Connected disciplines and target platforms remain coherent', 'CPU, GPU, memory, loading and network budgets are measured where relevant', 'Native tests and logs contain no unexplained failures', 'Final state read-back and evidence prove the requested outcome']}, 'ms_unity_render_pipeline_profiler': {'description': 'Unity specialist for URP/HDRP rendering, SRP Batcher, overdraw, shader variants and GPU captures.', 'category': 'quality', 'engine': 'unity', 'stages': ['Define the requested result and acceptance criteria for URP/HDRP rendering, SRP Batcher, overdraw, shader variants and GPU captures', 'Inspect the live project, dependencies, settings, assets and established conventions', 'Read exact advertised native tool schemas and select rollback-safe operations', 'Design ownership, data flow, lifecycle, error handling and target-platform budgets', 'Implement the real project change through live native tools while preserving explicit requirements', 'Integrate connected gameplay, UI, animation, VFX, audio, content and build behavior', 'Exercise failure, interruption, migration, compatibility and weakest-device cases', 'Run native tests and profiler evidence, inspect logs, read back final project state and fix defects'], 'qualityGates': ['Exact project paths, APIs, versions and ownership are verified', 'The result exists in the real project rather than only as advice', 'Lifecycle, cleanup, interruption and failure recovery are deterministic', 'Inputs, persistence and network authority are validated where consequential', 'Connected disciplines and target platforms remain coherent', 'CPU, GPU, memory, loading and network budgets are measured where relevant', 'Native tests and logs contain no unexplained failures', 'Final state read-back and evidence prove the requested outcome']}, 'ms_unity_netcode_authority': {'description': 'Unity specialist for Netcode authority, prediction, reconciliation, RPC validation and bandwidth.', 'category': 'quality', 'engine': 'unity', 'stages': ['Define the requested result and acceptance criteria for Netcode authority, prediction, reconciliation, RPC validation and bandwidth', 'Inspect the live project, dependencies, settings, assets and established conventions', 'Read exact advertised native tool schemas and select rollback-safe operations', 'Design ownership, data flow, lifecycle, error handling and target-platform budgets', 'Implement the real project change through live native tools while preserving explicit requirements', 'Integrate connected gameplay, UI, animation, VFX, audio, content and build behavior', 'Exercise failure, interruption, migration, compatibility and weakest-device cases', 'Run native tests and profiler evidence, inspect logs, read back final project state and fix defects'], 'qualityGates': ['Exact project paths, APIs, versions and ownership are verified', 'The result exists in the real project rather than only as advice', 'Lifecycle, cleanup, interruption and failure recovery are deterministic', 'Inputs, persistence and network authority are validated where consequential', 'Connected disciplines and target platforms remain coherent', 'CPU, GPU, memory, loading and network budgets are measured where relevant', 'Native tests and logs contain no unexplained failures', 'Final state read-back and evidence prove the requested outcome']}, 'ms_godot_scene_signal_architecture': {'description': 'Godot specialist for scene composition, ownership, signals, autoload boundaries and typed GDScript contracts.', 'category': 'quality', 'engine': 'godot', 'stages': ['Define the requested result and acceptance criteria for scene composition, ownership, signals, autoload boundaries and typed GDScript contracts', 'Inspect the live project, dependencies, settings, assets and established conventions', 'Read exact advertised native tool schemas and select rollback-safe operations', 'Design ownership, data flow, lifecycle, error handling and target-platform budgets', 'Implement the real project change through live native tools while preserving explicit requirements', 'Integrate connected gameplay, UI, animation, VFX, audio, content and build behavior', 'Exercise failure, interruption, migration, compatibility and weakest-device cases', 'Run native tests and profiler evidence, inspect logs, read back final project state and fix defects'], 'qualityGates': ['Exact project paths, APIs, versions and ownership are verified', 'The result exists in the real project rather than only as advice', 'Lifecycle, cleanup, interruption and failure recovery are deterministic', 'Inputs, persistence and network authority are validated where consequential', 'Connected disciplines and target platforms remain coherent', 'CPU, GPU, memory, loading and network budgets are measured where relevant', 'Native tests and logs contain no unexplained failures', 'Final state read-back and evidence prove the requested outcome']}, 'ms_godot_resource_save_pipeline': {'description': 'Godot specialist for Resource schemas, persistence, migrations, import identity and deterministic recovery.', 'category': 'quality', 'engine': 'godot', 'stages': ['Define the requested result and acceptance criteria for Resource schemas, persistence, migrations, import identity and deterministic recovery', 'Inspect the live project, dependencies, settings, assets and established conventions', 'Read exact advertised native tool schemas and select rollback-safe operations', 'Design ownership, data flow, lifecycle, error handling and target-platform budgets', 'Implement the real project change through live native tools while preserving explicit requirements', 'Integrate connected gameplay, UI, animation, VFX, audio, content and build behavior', 'Exercise failure, interruption, migration, compatibility and weakest-device cases', 'Run native tests and profiler evidence, inspect logs, read back final project state and fix defects'], 'qualityGates': ['Exact project paths, APIs, versions and ownership are verified', 'The result exists in the real project rather than only as advice', 'Lifecycle, cleanup, interruption and failure recovery are deterministic', 'Inputs, persistence and network authority are validated where consequential', 'Connected disciplines and target platforms remain coherent', 'CPU, GPU, memory, loading and network budgets are measured where relevant', 'Native tests and logs contain no unexplained failures', 'Final state read-back and evidence prove the requested outcome']}, 'ms_godot_rendering_profiler': {'description': 'Godot specialist for Forward+/Mobile/Compatibility rendering, shaders, draw calls, overdraw and frame captures.', 'category': 'quality', 'engine': 'godot', 'stages': ['Define the requested result and acceptance criteria for Forward+/Mobile/Compatibility rendering, shaders, draw calls, overdraw and frame captures', 'Inspect the live project, dependencies, settings, assets and established conventions', 'Read exact advertised native tool schemas and select rollback-safe operations', 'Design ownership, data flow, lifecycle, error handling and target-platform budgets', 'Implement the real project change through live native tools while preserving explicit requirements', 'Integrate connected gameplay, UI, animation, VFX, audio, content and build behavior', 'Exercise failure, interruption, migration, compatibility and weakest-device cases', 'Run native tests and profiler evidence, inspect logs, read back final project state and fix defects'], 'qualityGates': ['Exact project paths, APIs, versions and ownership are verified', 'The result exists in the real project rather than only as advice', 'Lifecycle, cleanup, interruption and failure recovery are deterministic', 'Inputs, persistence and network authority are validated where consequential', 'Connected disciplines and target platforms remain coherent', 'CPU, GPU, memory, loading and network budgets are measured where relevant', 'Native tests and logs contain no unexplained failures', 'Final state read-back and evidence prove the requested outcome']}, 'ms_godot_multiplayer_authority': {'description': 'Godot specialist for multiplayer authority, RPC modes, synchronization, validation, latency and reconnect.', 'category': 'quality', 'engine': 'godot', 'stages': ['Define the requested result and acceptance criteria for multiplayer authority, RPC modes, synchronization, validation, latency and reconnect', 'Inspect the live project, dependencies, settings, assets and established conventions', 'Read exact advertised native tool schemas and select rollback-safe operations', 'Design ownership, data flow, lifecycle, error handling and target-platform budgets', 'Implement the real project change through live native tools while preserving explicit requirements', 'Integrate connected gameplay, UI, animation, VFX, audio, content and build behavior', 'Exercise failure, interruption, migration, compatibility and weakest-device cases', 'Run native tests and profiler evidence, inspect logs, read back final project state and fix defects'], 'qualityGates': ['Exact project paths, APIs, versions and ownership are verified', 'The result exists in the real project rather than only as advice', 'Lifecycle, cleanup, interruption and failure recovery are deterministic', 'Inputs, persistence and network authority are validated where consequential', 'Connected disciplines and target platforms remain coherent', 'CPU, GPU, memory, loading and network budgets are measured where relevant', 'Native tests and logs contain no unexplained failures', 'Final state read-back and evidence prove the requested outcome']}, 'ms_blender_render_color_pipeline': {'description': 'Blender specialist for Cycles/Eevee lighting, materials, sampling, color management, compositing and render budgets. Establishes the art target the model forms are validated against.', 'category': 'quality', 'engine': 'blender', 'stages': ['Define the intended look and the delivery constraints (still, turntable, or in-engine handoff)', 'Inspect the scene: render engine, resolution, existing lights, world and the materials already authored', 'Set colour management first - scene-referred pipeline, the right view transform and a consistent exposure - so everything after it is judged correctly', 'Author materials from the mesh\'s actual UVs and texel density rather than overriding them with flat colours', 'Light for form: a key that reveals silhouette and bevel edges, fill that holds shadow detail, and a rim or environment contribution that separates the object from the background', 'Choose sampling and denoising per engine - Cycles needs an explicit sample and denoise strategy; Eevee needs its own shadow, AO and reflection settings', 'Composite deliberately for glow, grade and vignette while keeping the raw render recoverable', 'Measure render time and memory against the budget and confirm the material reads correctly in the target engine, not only in Blender'], 'qualityGates': ['Colour management and exposure are set before material work begins', 'Materials are authored against the real UVs, not flat substitutes', 'Lighting reveals form: silhouette, bevels and surface breaks all read', 'Sampling and denoising are chosen per render engine', 'The look survives the move into the target engine', 'Render time and memory are measured against a stated budget', 'Raw render remains recoverable behind the composite', 'No unexplained black, blown-out or untextured surfaces at final capture']}, 'ms_blender_geometry_nodes_pipeline': {"description": "Blender specialist for Geometry Nodes interfaces, fields, simulation, instances, determinism and performance. Prefers instancing real modelled assets over scattering generated primitives.", "category": "quality", "engine": "blender", "stages": ["Define the requested result and acceptance criteria for the node system", "Inspect the existing node graph, its inputs, dependencies and the mesh data it consumes", "Design the graph around named Group Inputs so it is reusable and stays readable", "Build with fields (per-element data flow) rather than a mesh-in/mesh-out chain where the logic is per-point", "Instance real geometry rather than generating it in-node: point-instance a modelled asset instead of scattering spheres as \"rocks\"", "Drive all variation from explicit, seeded parameters so two runs produce identical output (determinism)", "Keep evaluation cheap: realize instances only when required, cap density, and avoid per-frame simulation on large counts", "Verify with the node graph read back, a vertex/instance count, and a re-evaluation that matches the first run"], "qualityGates": ["Graph is driven by named parameters, not hardcoded values", "Per-element logic uses fields correctly", "Scattered/instanced geometry reuses real modelled assets with correct forms", "Deterministic: the same seed gives the same result across runs", "Instance and vertex counts are within the stated budget", "No unintentional realization of large instance sets", "Graph is readable and labelled for handoff", "Re-evaluation output matches the validated first run"]}, 'ms_blender_rig_animation_pipeline': {"description": "Blender specialist for rig hierarchy, deformation, controls, actions, NLA, retargeting and export. Requires a correctly formed mesh before it will rig it.", "category": "quality", "engine": "blender", "stages": ["Define the rig scope, bone-count budget and the target engine's skeleton conventions", "Inspect the mesh first: confirm loops exist where joints will bend, and that each limb is a properly formed cylinder-like volume - a scaled sphere cannot deform cleanly", "Build the armature with a readable hierarchy: a clear root, spine and limb chains, and controls separated from deform bones", "Bind with deliberate weights and correct bone envelopes; check the shoulder, elbow, hip and knee individually rather than trusting an automatic bind", "Add constraints (IK, limits, drivers) and keep them on control bones, never on deform bones", "Author actions with usable naming and NLA strips so clips layer and blend predictably", "Set up retargeting/export mappings and verify axis and scale conventions for the target engine", "Read the pose and skin deformation back, and confirm the rest pose is preserved"], "qualityGates": ["Deform geometry supports the intended range of motion", "Rig hierarchy is readable and roles are separated", "Weights hold through extreme poses without collapse or pinching", "Controls are usable and constrained sensibly", "Actions and NLA strips are named and layer predictably", "Retarget/export preserves scale, axes and roll", "Rest pose is intact after export", "Deformation is checked in poses, not only at rest"]}, 'ms_blender_topology_modifier_pipeline': {'description': 'Blender specialist for production topology, modifiers, normals, UVs, LODs and non-destructive handoff. Form-first: checks that each part is built from the right primitive before retopologising it.', 'category': 'quality', 'engine': 'blender', 'stages': ['Define the requested result and acceptance criteria for topology, modifiers, normals, UVs and LODs', 'Inspect the live mesh: object type, vertex/face count per part and modifier stack - a part carrying a default UV sphere count has not been modelled yet', 'Check form before flow: confirm each part is a cylinder/box/extruded profile/curve where it should be, and flag any sphere that should not be one (ms_form_guidance action="audit")', 'Plan quad flow around deformation and silhouette: loops follow the form, poles are pushed away from deforming areas, no n-gons on a curved surface', 'Apply modifiers non-destructively (Bevel for edge catch, Subdivision for curves, Solidify for card thickness) and keep them live until export', 'Unwrap with deliberate seams, consistent texel density and enough padding for mip downsampling', 'Generate coherent LODs by reduction that preserves silhouette, not by uniform decimation that destroys it', 'Verify normals face outward, tangents are valid, and read the final mesh back before handoff'], 'qualityGates': ['Every part is built from a form appropriate to what it is', 'Quad flow supports deformation and reads correctly in silhouette', 'No flipped normals, stray n-gons on curved surfaces or unapplied scale', 'UV seams land in hidden areas with consistent texel density', 'LOD chain preserves silhouette at each tier', 'Modifier stack is live and export-safe', 'Mesh statistics are read back as evidence', 'Final import in the target engine shows no topology warnings']},}
 ADVANCED_DIRECT_CONTRACTS.update(ENGINE_PRO_V3_CONTRACTS)
 
 
@@ -854,6 +1100,117 @@ BUILTIN_TOOLS = [
          "checks": {"type": "array", "items": {"type": "string"}}, "evidence": {"type": "array", "items": {"type": "string"}},
          "known_issues": {"type": "array", "items": {"type": "string"}}, "round": {"type": "integer", "minimum": 1, "maximum": 3}},
       "required": ["objective", "checks", "evidence"]}},
+    {"name": "ms_form_guidance", "description": "Decide which primitive a modelled feature should actually be built from, BEFORE adding it. A limb is a cylinder, a plate is a box, a cable is a curve swept to mesh - and a sphere is right for only a short list of genuinely round things (eyeballs, ball joints, planets, knobs). Call this when you are about to model anything in Blender, or any engine, and especially before adding a primitive. Pass action=audit with your proposed part list to catch a sphere that should have been something else - that is the check that prevents a model arriving as a pile of balls.",
+     "inputSchema": {"type": "object", "properties": {
+         "action": {"type": "string", "enum": ["classify", "audit", "table"],
+                    "description": "classify one feature, audit a whole part list, or print the full form table."},
+         "feature": {"type": "string", "description": "For action=classify: the feature you are about to model, e.g. 'robot upper arm'."},
+         "parts": {"type": "array", "description": "For action=audit: the proposed parts. Each is a name string, or a {name/part/feature, form/primitive} object.",
+                   "items": {}},
+         "engine": {"type": "string", "description": "Optional engine id for wording (blender, roblox, unity, godot). Defaults to blender."}},
+      "required": ["action"]}},
+    {"name": "ms_media_relay", "description": "Inspect or clear the media relay that carries a user's photo/video into a chat surface with no upload control. action=stats reports the live policy and spool usage; action=list shows what is staged; action=release drops one item or all of them. This tool never accepts media bytes itself - the extension stages them when the user drops a file, and pastes the resulting payloads. Use it to answer 'did my screenshot arrive?' and to clean up.",
+     "inputSchema": {"type": "object", "properties": {
+         "action": {"type": "string", "enum": ["stats", "list", "release"]},
+         "id": {"type": "string"}}, "required": ["action"]}},
+    {"name": "ms_surface_list", "description": "See what the user has open: every browser tab on this machine (real titles, URLs and hosts), plus every visible desktop window. This is the discovery step - it returns the integer tab ids and window handles that every other surface tool needs. Read-only. Use it when the user says 'the thing I have open', 'that tab', 'my other window', or before acting on any surface you have not yet looked at.",
+     "inputSchema": {"type": "object", "properties": {
+         "scope": {"type": "string", "enum": ["all", "tabs", "windows"], "description": "all (default), tabs only, or windows only"},
+         "query": {"type": "string", "description": "Optional case-insensitive filter on title/host."}}}},
+    {"name": "ms_surface_read", "description": "Read the visible text of one browser tab, so you can act on what is actually on the page instead of guessing. Returns the page title, URL, any selected text, and the readable body text (capped). Read-only. Get the tab_id from ms_surface_list first; browser-internal pages and PDF viewers cannot be read and will say so. `limit` is the readback size in characters and is CLAMPED into 200..12000 (default 6000) - any value is accepted.",
+     "inputSchema": {"type": "object", "properties": {
+         "tab_id": {"type": "integer"}, "limit": {"type": "integer", "minimum": 1, "maximum": 60000, "description": "Readback size in characters. Clamped into 200..12000; default 6000."}},
+      "required": ["tab_id"]}},
+    {"name": "ms_surface_type", "description": "Type text into the composer of a browser tab and optionally submit it - the way a person would, so it works on sites that reject scripted input. Use it for 'type this into that tab', 'search for X there', or to drive a site Multi-Script does not natively support. Defaults to submitting; pass submit=false to fill the field and stop. Confirm the result with ms_surface_read.",
+     "inputSchema": {"type": "object", "properties": {
+         "tab_id": {"type": "integer"}, "text": {"type": "string"},
+         "submit": {"type": "boolean", "description": "Default true. false fills the field without sending."}},
+      "required": ["tab_id", "text"]}},
+    {"name": "ms_surface_open", "description": "Open a new browser tab at an http/https URL and return its tab id. Refuses javascript:, data:, file: and browser-internal schemes because those can execute or reach the local machine. Use it to bring a resource up for the user, then ms_surface_read to see it.",
+     "inputSchema": {"type": "object", "properties": {
+         "url": {"type": "string"}, "active": {"type": "boolean", "description": "Default true; false opens it in the background."}},
+      "required": ["url"]}},
+    {"name": "ms_surface_focus", "description": "Bring a browser tab to the front and focus its window, so the user can see what you are describing. Visibility only - it never reads or changes the page. Get the tab_id from ms_surface_list.",
+     "inputSchema": {"type": "object", "properties": {"tab_id": {"type": "integer"}}, "required": ["tab_id"]}},
+    {"name": "ms_app_list", "description": "List the desktop applications running on this machine (Roblox Studio, Unity, Godot, Blender, Figma, editors, browsers...), with their process names, pids and window titles. Read-only, no screenshots and no capture. Use it to answer 'is Studio open?', 'what do I have running?', or before suggesting a desktop workflow.",
+     "inputSchema": {"type": "object", "properties": {
+         "query": {"type": "string", "description": "Optional filter on app or process name."},
+         "include_unknown": {"type": "boolean", "description": "Default false (recognised creative/dev apps only). true adds every other process."}}}},
+    {"name": "ms_app_snapshot", "description": "One-shot picture of the user's whole desktop: platform, what this machine can and cannot see, the recognised apps that are open, and every visible window title. Read-only. The fastest way to orient yourself before helping with a desktop task.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "ms_app_read_window", "description": "Return the readable text of one desktop window by handle, pid or title, plus an honest statement of how good that read was (fidelity: accessibility, title-only, or none). Never screenshots and never fabricates content - if only the title is available it says so. Get a handle from ms_surface_list or ms_app_list.",
+     "inputSchema": {"type": "object", "properties": {
+         "handle": {"type": "integer"}, "pid": {"type": "integer"}, "title": {"type": "string"}}}},
+    {"name": "ms_app_setup_plan", "description": "Report exactly what optional packages would improve desktop visibility on this machine, whether each is already satisfied, and the exact command to install it. Installs NOTHING itself. Call this when desktop reading is limited or when the user asks how to unlock full desktop vision, then show them the plan and run only what they approve.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "ms_roblox_build_verifier", "description": "Verify that something you just built in Roblox Studio is actually there and correct, by re-reading the live place rather than trusting your own memory of what you sent. Give it the instance path you claimed to create or change plus what you expected; it reads the real Studio state back and reports matched / missing / mismatched, with the exact evidence. Use this after any consequential build step - it is the difference between 'I made it' and 'it is there'.",
+     "inputSchema": {"type": "object", "properties": {
+         "path": {"type": "string", "description": "Instance path you claimed, e.g. Workspace.Door or game.StarterGui.MainMenu"},
+         "expect": {"type": "string", "description": "What you expected to be true, in words, e.g. 'a Part named Door with CanCollide true'"},
+         "properties": {"type": "array", "items": {"type": "string"}, "description": "Optional exact property names to read back and compare"},
+         "expected_properties": {"type": "object", "description": "Optional exact name->value pairs to assert"},
+         "studio_id": {"type": "string"}},
+      "required": ["path"]}},
+    {"name": "ms_roblox_script_audit", "description": "Read the real Luau source of one or more scripts in the live place and audit it for the mistakes that actually break Roblox games: server/client boundary violations, unguarded RemoteEvent handlers, deprecated APIs, unbounded loops or waits, missing task.wait in loops, and unsanitized player input. Returns findings tied to the exact script and line where the tool can see them. Read-only.",
+     "inputSchema": {"type": "object", "properties": {
+         "paths": {"type": "array", "items": {"type": "string"}, "description": "Script instance paths to audit, e.g. ServerScriptService.GameLoop"},
+         "scope": {"type": "string", "description": "Optional instance subtree to discover scripts under, e.g. ServerScriptService"},
+         "limit": {"type": "integer", "minimum": 1, "maximum": 25},
+         "studio_id": {"type": "string"}},
+      "required": []}},
+    {"name": "ms_roblox_playtest_director", "description": "Plan and then run a real Roblox playtest: start the session in the right datamodel, exercise a named scenario, capture the console output, stop cleanly, and report what the run proved. Wraps the native start_stop_play, user input and console-output tools into one verified sequence instead of a scatter of calls. Every step is a real Studio action, never simulated.",
+     "inputSchema": {"type": "object", "properties": {
+         "scenario": {"type": "string", "description": "What to verify, e.g. 'the door opens when the player walks into it'"},
+         "mode": {"type": "string", "enum": ["play", "run", "server"], "description": "play = with a character (default); run = started but no player; server = server datamodel only"},
+         "inputs": {"type": "array", "items": {"type": "string"}, "description": "Ordered input steps to exercise, e.g. ['press W for 2 seconds', 'touch the door']"},
+         "expect": {"type": "string", "description": "Observable outcome that would prove the scenario passed"},
+         "auto_run": {"type": "boolean", "description": "Default false: returns the plan and the exact calls. true executes the plan for real."},
+         "studio_id": {"type": "string"}},
+      "required": ["scenario"]}},
+    {"name": "ms_roblox_asset_scout", "description": "Search the Creator Store and the live place for assets that already fit what the user is building, and report each candidate with the reason it fits and the real id needed to insert it. Use it before telling a user to build something by hand, and to check whether an asset they asked for already exists in their own place. Never invents asset ids.",
+     "inputSchema": {"type": "object", "properties": {
+         "query": {"type": "string", "description": "What to find, e.g. 'low poly wooden door'"},
+         "kind": {"type": "string", "enum": ["any", "model", "mesh", "image", "audio", "animation", "material"]},
+         "in_place": {"type": "boolean", "description": "Default false: search the Creator Store. true searches the user's own loaded place instead."},
+         "limit": {"type": "integer", "minimum": 1, "maximum": 25},
+         "studio_id": {"type": "string"}},
+      "required": ["query"]}},
+    {"name": "ms_roblox_scene_diff", "description": "Compare what a Roblox place looked like before and after a change, so a large edit can be reviewed instead of hoped for. Capture a snapshot of a subtree first, then capture again after the change; this reports instances added, removed and modified, with property-level detail where the tool can read it. Read-only and reversible - a snapshot is just recorded state.",
+     "inputSchema": {"type": "object", "properties": {
+         "action": {"type": "string", "enum": ["capture", "compare", "list"], "description": "capture records a snapshot; compare diffs two snapshots; list shows stored snapshots"},
+         "path": {"type": "string", "description": "Instance subtree to capture, e.g. Workspace"},
+         "label": {"type": "string", "description": "Optional name for the snapshot, e.g. 'before-door-fix'"},
+         "before": {"type": "string", "description": "Snapshot label or id to compare from"},
+         "after": {"type": "string", "description": "Snapshot label or id to compare to"},
+         "depth": {"type": "integer", "minimum": 1, "maximum": 6, "description": "How deep to walk the subtree. Default 3."},
+         "studio_id": {"type": "string"}},
+      "required": ["action"]}},
+    {"name": "ms_roblox_error_triage", "description": "Turn raw Roblox Studio console output into a ranked, actionable diagnosis: which errors matter, what each one actually means, the most likely cause, and the smallest safe fix. Paste the output (or let it read the live console) and it separates real failures from noise like deprecation warnings and plugin chatter. Use it the moment a playtest or build reports errors.",
+     "inputSchema": {"type": "object", "properties": {
+         "output": {"type": "string", "description": "Raw console/log text. Omit to read the live Studio console instead."},
+         "read_live": {"type": "boolean", "description": "Default false. true reads the current Studio console output."},
+         "studio_id": {"type": "string"}},
+      "required": []}},
+    {"name": "ms_agent_plan_then_act", "description": "For a multi-step request, produce an explicit ordered plan with a verification step after each action, then execute it only once the plan is visible. This is the tool to reach for when the user gives you a goal rather than a single command and the steps depend on each other. Returns either the plan awaiting approval, or the executed results with per-step evidence.",
+     "inputSchema": {"type": "object", "properties": {
+         "goal": {"type": "string"},
+         "constraints": {"type": "array", "items": {"type": "string"}},
+         "approve": {"type": "boolean", "description": "Default false: return the plan only. true marks it approved for execution."},
+         "max_steps": {"type": "integer", "minimum": 1, "maximum": 12}},
+      "required": ["goal"]}},
+    {"name": "ms_agent_self_check", "description": "Before claiming a task is finished, run this to check your own work honestly: what you actually verified, what you only assumed, what is still unproven, and what a careful reviewer would ask for next. Returns a completion confidence with the specific gaps named. Use it to avoid over-claiming, especially after a long multi-tool sequence.",
+     "inputSchema": {"type": "object", "properties": {
+         "task": {"type": "string", "description": "What you were asked to do"},
+         "did": {"type": "array", "items": {"type": "string"}, "description": "Actions you actually took"},
+         "evidence": {"type": "array", "items": {"type": "string"}, "description": "Concrete evidence each action worked, e.g. read-back output"},
+         "assumptions": {"type": "array", "items": {"type": "string"}, "description": "Things you assumed without proving"},
+         "engine": {"type": "string"}},
+      "required": ["task"]}},
+    {"name": "ms_agent_context_recall", "description": "Answer 'what were we doing and what did we already decide' from the live session: the current objective, the engines and servers connected, the commands that already ran and their outcomes, and the open threads. Use it after a long gap, when the conversation has grown large, or before repeating work that may already be done.",
+     "inputSchema": {"type": "object", "properties": {
+         "query": {"type": "string", "description": "Optional focus, e.g. 'the door work'."},
+         "limit": {"type": "integer", "minimum": 1, "maximum": 50}},
+      "required": []}},
     {"name": "ms_workflow_plan", "description": "Create a domain-aware production plan for UI/UX, animation, VFX, modeling, coding, testing, and builds across connected engines.",
      "inputSchema": {"type": "object", "properties": {"objective": {"type": "string"}, "domains": {"type": "array", "items": {"type": "string"}}, "targets": {"type": "array", "items": {"type": "string"}}}, "required": ["objective", "domains"]}},
     {"name": "ms_parallel_tools", "description": "Run independent MCP tools on different servers concurrently, such as generating a model in Blender while inspecting or building in Unity. Use at most one call per server and only when operations do not depend on each other.",
@@ -892,7 +1249,7 @@ BUILTIN_TOOLS = [
     {"name": "ms_content_pipeline_plan", "description": "Plan source files, naming, import settings, validation, optimization, versioning, and engine handoff for game content.", "inputSchema": {"type":"object","properties":{"engine":{"type":"string"},"content_types":{"type":"array","items":{"type":"string"}},"source_tools":{"type":"array","items":{"type":"string"}}},"required":["engine","content_types"]}},
     {"name": "ms_playtest_protocol", "description": "Create a repeatable playtest protocol with cohorts, tasks, observations, telemetry, severity, and decision rules.", "inputSchema": {"type":"object","properties":{"objective":{"type":"string"},"build":{"type":"string"},"participants":{"type":"integer","minimum":1},"platforms":{"type":"array","items":{"type":"string"}}},"required":["objective"]}},
     {"name": "ms_definition_of_done", "description": "Create a strict, evidence-based completion gate for a game feature or release.", "inputSchema": {"type":"object","properties":{"feature":{"type":"string"},"engine":{"type":"string"},"risk":{"type":"string","enum":["low","medium","high"]}},"required":["feature","engine"]}},
-    {"name": "ms_orchestrate_request", "description": "Automatically select a complementary multi-skill stack for a player request: design, implementation, polish, optimization, and validation—not a single isolated skill.", "inputSchema": {"type":"object","properties":{"request":{"type":"string"},"engine":{"type":"string","enum":["roblox","unity","godot","blender","figma","general"]},"max_skills":{"type":"integer","minimum":8,"maximum":40}},"required":["request","engine"]}},
+    {"name": "ms_orchestrate_request", "description": "Automatically select a complementary multi-skill stack for a player request: design, implementation, polish, optimization, and validation—not a single isolated skill.", "inputSchema": {"type":"object","properties":{"request":{"type":"string"},"engine":{"type":"string","enum":["roblox","unity","godot","blender","figma","general"]},"max_skills":{"type":"integer","minimum":1,"maximum":40}},"required":["request","engine"]}},
     {"name": "ms_activate_skill_stack", "description": "Load and combine a professional skill stack into an executable work contract. Selection is preparation; real MCP implementation and verification must follow.", "inputSchema": {"type":"object","properties":{"request":{"type":"string"},"engine":{"type":"string"},"skill_ids":{"type":"array","minItems":2,"maxItems":8,"items":{"type":"string"}}},"required":["request","engine"]}},
     {"name": "ms_animation_director", "description": "Create an engine-ready professional animation direction and implementation plan covering rig, clips, state logic, layering, IK, events, networking, polish, and validation.", "inputSchema": {"type":"object","properties":{"engine":{"type":"string"},"subject":{"type":"string"},"style":{"type":"string"},"actions":{"type":"array","items":{"type":"string"}}},"required":["engine","subject"]}},
     {"name": "ms_texture_art_pipeline", "description": "Create a complete texture/material art workflow from visual target through source creation, UV/tiling, channel packing, import, optimization, and in-engine validation.", "inputSchema": {"type":"object","properties":{"engine":{"type":"string"},"asset":{"type":"string"},"style":{"type":"string"},"platforms":{"type":"array","items":{"type":"string"}}},"required":["engine","asset"]}},
@@ -1008,9 +1365,9 @@ BUILTIN_TOOLS = [
     {'name': 'ms_performance_quality_audit', 'description': 'Performance quality audit with a senior ten-year-studio craft bar.', 'inputSchema': {'type': 'object', 'properties': {'engine': {'type': 'string'}, 'feature': {'type': 'string'}, 'style': {'type': 'string'}, 'platforms': {'type': 'array', 'items': {'type': 'string'}}, 'constraints': {'type': 'array', 'items': {'type': 'string'}}, 'context': {'type': 'string'}}, 'required': ['feature']}},
     {'name': 'ms_cross_engine_integration_audit', 'description': 'Cross-engine integration audit with a senior ten-year-studio craft bar.', 'inputSchema': {'type': 'object', 'properties': {'engine': {'type': 'string'}, 'feature': {'type': 'string'}, 'style': {'type': 'string'}, 'platforms': {'type': 'array', 'items': {'type': 'string'}}, 'constraints': {'type': 'array', 'items': {'type': 'string'}}, 'context': {'type': 'string'}}, 'required': ['feature']}},
     {'name': 'ms_release_quality_bar', 'description': 'Release quality bar with a senior ten-year-studio craft bar.', 'inputSchema': {'type': 'object', 'properties': {'engine': {'type': 'string'}, 'feature': {'type': 'string'}, 'style': {'type': 'string'}, 'platforms': {'type': 'array', 'items': {'type': 'string'}}, 'constraints': {'type': 'array', 'items': {'type': 'string'}}, 'context': {'type': 'string'}}, 'required': ['feature']}},
-    {'name': 'ms_full_spectrum_skill_mesh', 'description': 'Coordinate the relevant specialized skills, direct tools and engine virtual tools together so every game-development aspect strengthens the same real deliverable.', 'inputSchema': {'type': 'object', 'properties': {'request': {'type': 'string'}, 'engine': {'type': 'string', 'enum': ['roblox', 'unity', 'godot', 'blender', 'figma', 'general']}, 'platforms': {'type': 'array', 'items': {'type': 'string'}}, 'constraints': {'type': 'array', 'items': {'type': 'string'}}, 'skill_limit': {'type': 'integer', 'minimum': 8, 'maximum': 40}, 'direct_tool_limit': {'type': 'integer', 'minimum': 8, 'maximum': 32}, 'virtual_tool_limit': {'type': 'integer', 'minimum': 4, 'maximum': 30}}, 'required': ['request', 'engine']}},
+    {'name': 'ms_full_spectrum_skill_mesh', 'description': 'Coordinate the relevant specialized skills, direct tools and engine virtual tools together so every game-development aspect strengthens the same real deliverable.', 'inputSchema': {'type': 'object', 'properties': {'request': {'type': 'string'}, 'engine': {'type': 'string', 'enum': ['roblox', 'unity', 'godot', 'blender', 'figma', 'general']}, 'platforms': {'type': 'array', 'items': {'type': 'string'}}, 'constraints': {'type': 'array', 'items': {'type': 'string'}}, 'skill_limit': {'type': 'integer', 'minimum': 1, 'maximum': 40}, 'direct_tool_limit': {'type': 'integer', 'minimum': 1, 'maximum': 32}, 'virtual_tool_limit': {'type': 'integer', 'minimum': 1, 'maximum': 30}}, 'required': ['request', 'engine']}},
     {'name': 'ms_cross_discipline_integration_review', 'description': 'Review whether specialized art, design, gameplay, engineering, audio, performance, accessibility and testing tools were integrated into one complete result.', 'inputSchema': {'type': 'object', 'properties': {'request': {'type': 'string'}, 'engine': {'type': 'string', 'enum': ['roblox', 'unity', 'godot', 'blender', 'figma', 'general']}, 'platforms': {'type': 'array', 'items': {'type': 'string'}}, 'constraints': {'type': 'array', 'items': {'type': 'string'}}, 'project_context': {'type': 'string'}, 'evidence': {'type': 'array', 'items': {'type': 'string'}}}, 'required': ['request', 'engine']}},
-    {'name': 'ms_studio_director', 'description': 'Silently match any meaningful user request to a senior-studio stack of direct tools, skills, virtual tools and evidence gates before real MCP execution.', 'inputSchema': {'type': 'object', 'properties': {'request': {'type': 'string'}, 'engine': {'type': 'string', 'enum': ['roblox', 'unity', 'godot', 'blender', 'figma', 'general']}, 'platforms': {'type': 'array', 'items': {'type': 'string'}}, 'style': {'type': 'string'}, 'constraints': {'type': 'array', 'items': {'type': 'string'}}, 'max_tools': {'type': 'integer', 'minimum': 8, 'maximum': 32}, 'max_skills': {'type': 'integer', 'minimum': 8, 'maximum': 40}, 'max_virtual_tools': {'type': 'integer', 'minimum': 4, 'maximum': 30}}, 'required': ['request', 'engine']}},
+    {'name': 'ms_studio_director', 'description': 'Silently match any meaningful user request to a senior-studio stack of direct tools, skills, virtual tools and evidence gates before real MCP execution. The limits are advisory: any value is accepted and raised to the effective floor (max_tools >= 8, max_skills >= 8, max_virtual_tools >= 4), so omit them unless you want a larger stack.', 'inputSchema': {'type': 'object', 'properties': {'request': {'type': 'string'}, 'engine': {'type': 'string', 'enum': ['roblox', 'unity', 'godot', 'blender', 'figma', 'general']}, 'platforms': {'type': 'array', 'items': {'type': 'string'}}, 'style': {'type': 'string'}, 'constraints': {'type': 'array', 'items': {'type': 'string'}}, 'max_tools': {'type': 'integer', 'minimum': 1, 'maximum': 32}, 'max_skills': {'type': 'integer', 'minimum': 1, 'maximum': 40}, 'max_virtual_tools': {'type': 'integer', 'minimum': 1, 'maximum': 30}}, 'required': ['request', 'engine']}},
     {'name': 'ms_list_direct_tools', 'description': 'Discover Multi-Script direct tools by category or query without dumping the full catalogue into model context.', 'inputSchema': {'type': 'object', 'properties': {'category': {'type': 'string', 'enum': ['animation', 'uiux', 'art3d', 'gameplay', 'quality', 'all']}, 'query': {'type': 'string'}, 'limit': {'type': 'integer', 'minimum': 1, 'maximum': 100}}}},
     {'name': 'ms_direct_tool_details', 'description': 'Load one direct tool schema plus its exact execution stages and quality gates.', 'inputSchema': {'type': 'object', 'properties': {'tool': {'type': 'string'}}, 'required': ['tool']}},
 ]
@@ -1020,6 +1377,231 @@ for _name, _spec in ENGINE_PRO_V3_CONTRACTS.items():
 
 for _name, _spec in ROBLOX_STUDIO_V3_CONTRACTS.items():
     BUILTIN_TOOLS.append({"name":_name,"description":_spec["description"]+" Improves Roblox Studio execution through the active provider model and official live native tools.","inputSchema":{"type":"object","properties":{"engine":{"type":"string","enum":["roblox"]},"feature":{"type":"string"},"target_tier":{"type":"string"},"platforms":{"type":"array","items":{"type":"string"}},"metrics":{"type":"array","items":{"type":"string"}},"constraints":{"type":"array","items":{"type":"string"}},"context":{"type":"string"}},"required":["feature"]}})
+
+# ══════════════════════════════════════════════════════════════════════════
+#  ENGINE-NATIVE TOOL FACADE
+# ══════════════════════════════════════════════════════════════════════════
+# The advisory tools above tell the model WHAT to do. These actually DO it: each
+# one is a thin, dialect-correct wrapper that composes the live native MCP tools
+# of a specific engine into one meaningful operation, then reads back the result
+# to prove it happened.
+#
+# WHY THIS EXISTS
+# The engines do not share a vocabulary, and each has a habitual failure:
+#
+#   * Roblox Studio requires `studio_id` on every place-scoped call, so with two
+#     Studios open a model that omits it is rejected - the "invalid parameters:
+#     parameters.studio_id is required" spam reported live.
+#   * Unity is ACTION-DISPATCH: `manage_scene` takes `action: "get_hierarchy"`.
+#     A model that writes {"command":"get_hierarchy"} gets "unknown command".
+#   * Godot requires `projectPath` (camelCase, absolute, the FOLDER holding
+#     project.godot) on almost everything; `list_projects` is the lone exception
+#     and takes `directory`.
+#   * Blender is code-execution based, so the failure is a JSON-escape bug in a
+#     long Python string rather than a wrong name.
+#
+# A model reading prose about four dialects will still get one wrong. It will not
+# get a single call with one obvious name and honest parameters wrong. So each
+# facade tool below advertises only ENGINE-NEUTRAL parameters, translates them to
+# the right dialect internally, and returns a normalised result envelope with the
+# exact native calls it issued. Nothing is invented: every tool name it can emit
+# is read from the engine's live advertised catalogue at call time, and it fails
+# loudly when the engine does not advertise what it needs.
+_FACADE_NATIVE_HINTS = {
+    # engine: {capability: [acceptable native tool names, in preference order]}
+    "roblox": {
+        "list_studios": ["list_roblox_studios"],
+        "read_tree": ["search_game_tree"],
+        "read_state": ["get_studio_state"],
+        "read_script": ["script_read"],
+        "write_script": ["multi_edit"],
+        "exec_code": ["execute_luau"],
+        "console": ["get_console_output"],
+        "inspect": ["inspect_instance"],
+    },
+    "unity": {
+        "read_tree": ["manage_scene"],
+        "find_objects": ["find_gameobjects"],
+        "read_console": ["read_console"],
+        "read_script": ["find_in_file"],
+        "write_script": ["script_apply_edits"],
+        "create_script": ["create_script"],
+        "create_object": ["manage_gameobject"],
+        "create_scene": ["manage_scene"],
+        "refresh": ["refresh_unity"],
+        "validate": ["validate_script"],
+        "hash": ["get_sha"],
+        "play": ["manage_editor"],
+    },
+    "godot": {
+        "version": ["get_godot_version"],
+        "project_info": ["get_project_info"],
+        "list_projects": ["list_projects"],
+        "create_scene": ["create_scene"],
+        "add_node": ["add_node"],
+        "save_scene": ["save_scene"],
+        "run": ["run_project"],
+        "console": ["get_debug_output"],
+        "stop": ["stop_project"],
+    },
+    "blender": {
+        "scene": ["get_scene_info"],
+        "object": ["get_object_info"],
+        "exec_code": ["execute_blender_code"],
+    },
+}
+
+ENGINE_FACADE_TOOLS = [
+    {
+        "name": "ms_native_capabilities",
+        "description": (
+            "Show what the CONNECTED engine can actually do right now: its live native tool catalogue, "
+            "which of those tools Multi-Script has a correct dialect wrapper for, and which higher-level "
+            "operations are therefore available. Call this once at the start of an engine session instead "
+            "of guessing tool names, and again after a reconnect. Read-only."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "server": {"type": "string", "description": "Engine server id: roblox, unity, godot or blender. Omit to report every connected engine."},
+                "refresh": {"type": "boolean", "description": "Re-read the catalogue from the live server before reporting."},
+            },
+        },
+    },
+    {
+        "name": "ms_native_read",
+        "description": (
+            "One read that works the same way on every engine: return the engine's current truth (scene/hierarchy, "
+            "console, project metadata, or one script) using whatever native tool that engine actually exposes. "
+            "Use it BEFORE any change so you are not editing from memory, and again after to prove the change landed. "
+            "Read-only, never mutates. Results include the exact native call used so you can trust the evidence."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "server": {"type": "string", "description": "Engine server id: roblox, unity, godot or blender."},
+                "what": {
+                    "type": "string",
+                    "enum": ["tree", "state", "console", "project", "script", "object"],
+                    "description": "tree = scene/hierarchy; state = engine status; console = output/errors; project = project metadata; script = one file's text; object = one object's transform/mesh/material.",
+                },
+                "target": {"type": "string", "description": "What to read for `script` (a path/dot-path) or `object` (an object name). Ignored by the other kinds."},
+                "query": {"type": "string", "description": "Optional filter for tree/console reads (e.g. 'Workspace', 'error')."},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 4000, "description": "Max rows/lines to return. Clamped to a safe range; any value is accepted."},
+                "studio_id": {"type": "string", "description": "Roblox only. The exact id from ms_native_read what=state; supplied automatically when only one Studio is connected."},
+            },
+            "required": ["server", "what"],
+        },
+    },
+    {
+        "name": "ms_native_write",
+        "description": (
+            "One write that works the same way on every engine, translating your intent into that engine's real "
+            "dialect so you never have to remember whether a scene edit is `manage_scene`+action, a `projectPath` "
+            "call, or an `execute_luau` block. Supports creating or replacing a script, adding a scene node, "
+            "creating a scene, setting object properties, and running arbitrary engine code. Always read back "
+            "(`ms_native_read`) after a write and never claim success without that evidence."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "server": {"type": "string", "description": "Engine server id: roblox, unity, godot or blender."},
+                "what": {
+                    "type": "string",
+                    "enum": ["script", "node", "scene", "properties", "code"],
+                    "description": "script = create/replace a script's text; node = add a node/GameObject; scene = create a new scene; properties = set fields on an existing object; code = run raw engine code.",
+                },
+                "target": {"type": "string", "description": "The object to act on: a script path/dot-path, an object name or dot-path, or a scene path. Not used by `code`."},
+                "content": {"type": "string", "description": "The payload: the script's full text, the code to run, or a JSON object string of the properties to set. For a script, pass the ENTIRE new body - a replace is not a diff."},
+                "properties": {"type": "object", "description": "Key/value fields to set for what=properties (e.g. {\"Position\": [1,2,3], \"Anchored\": true})."},
+                "node_type": {"type": "string", "description": "For what=node: the engine's own class name (Part, GameObject, Node2D, Sprite2D...)."},
+                "name": {"type": "string", "description": "For what=node/scene: the name to GIVE the new object (e.g. 'Health', 'Level1'). Omit to derive it from node_type. Without it the new node would inherit the scene/target path as its name - which is why it exists."},
+                "parent": {"type": "string", "description": "For what=node: where to attach it (a parent path or node name)."},
+                "mode": {"type": "string", "enum": ["Edit", "Server", "Client"], "description": "Roblox only: which DataModel to act in. Default Edit."},
+                "project_path": {"type": "string", "description": "Godot only: absolute path of the folder CONTAINING project.godot. Supplied automatically when known."},
+                "studio_id": {"type": "string", "description": "Roblox only: the exact id from ms_native_read what=state. Supplied automatically when a single Studio is connected."},
+                "dry_run": {"type": "boolean", "description": "When true, return the exact native call that WOULD be issued without executing it. Use it to confirm the shape on a new engine."},
+            },
+            "required": ["server", "what"],
+        },
+    },
+    {
+        "name": "ms_native_verify",
+        "description": (
+            "Prove a change actually took effect on the connected engine, rather than assuming it did. Captures a "
+            "fingerprint of the engine's real state (scene contents, script hash/text, console output), so you can "
+            "diff before and after. Pass `before` from an earlier call to get an explicit changed/unchanged verdict "
+            "with the evidence attached. Read-only."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "server": {"type": "string", "description": "Engine server id: roblox, unity, godot or blender."},
+                "what": {
+                    "type": "string",
+                    "enum": ["tree", "script", "console", "project"],
+                    "description": "What to fingerprint. `tree` and `script` are the ones that change after an edit.",
+                },
+                "target": {"type": "string", "description": "The script path/dot-path when what=script. Ignored otherwise."},
+                "before": {"type": "string", "description": "A fingerprint returned by a previous ms_native_verify call. When present, the result states plainly whether the engine changed and shows both sides."},
+                "studio_id": {"type": "string", "description": "Roblox only: the exact Studio id."},
+            },
+            "required": ["server", "what"],
+        },
+    },
+    {
+        "name": "ms_native_batch",
+        "description": (
+            "Run an ordered list of native engine operations in one call, stopping at the first failure. Each step "
+            "names a native tool and its arguments exactly as the engine advertises them; steps run against the same "
+            "connected server with dialect translation applied. Use it for a known multi-step sequence (create script, "
+            "refresh, validate, read console) so a single mistake cannot leave a half-applied change. Returns per-step "
+            "status, so a failure tells you exactly which step stopped and why."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "server": {"type": "string", "description": "Engine server id: roblox, unity, godot or blender."},
+                "steps": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 40,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "tool": {"type": "string", "description": "The native tool name exactly as advertised by the engine."},
+                            "arguments": {"type": "object", "description": "That tool's arguments."},
+                            "label": {"type": "string", "description": "Optional short label shown in the per-step report."},
+                        },
+                        "required": ["tool"],
+                    },
+                    "description": "The ordered operations to run.",
+                },
+                "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 300, "description": "Per-step timeout. Clamped to 1..300; any value is accepted."},
+                "dry_run": {"type": "boolean", "description": "Validate every step's tool name against the live catalogue and return the translated calls without executing anything."},
+            },
+            "required": ["server", "steps"],
+        },
+    },
+    {
+        "name": "ms_native_debug",
+        "description": (
+            "Diagnose why a native engine call is failing, without guessing: reports which servers are alive, which "
+            "of the engine's required tools this connection actually advertises, the exact parameter dialect Multi-Script "
+            "will use on the next call, and - for Roblox - whether studio_id resolution is currently unambiguous. "
+            "Run it when a call returns 'invalid parameters', 'unknown command' or 'unknown tool' instead of retrying "
+            "the same payload. Read-only."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "server": {"type": "string", "description": "Engine server id: roblox, unity, godot or blender. Omit to diagnose every configured server."},
+                "probe": {"type": "boolean", "description": "Also run a real read-only smoke test against the server so the diagnosis includes live evidence."},
+            },
+        },
+    },
+]
+BUILTIN_TOOLS.extend(ENGINE_FACADE_TOOLS)
 
 # Bind every engine-named direct specialist to its actual target. Previously,
 # some Studio craft schemas accepted any engine string even though their contract
@@ -1059,7 +1641,39 @@ def _resolve_schema_ref(root, ref):
     return node
 
 
-def _normalize_tool_arguments(schema, arguments, tool_name="tool"):
+# Parameters where an EMPTY string is a legitimate VALUE, not a missing argument.
+#
+# `old_string:""` is the DOCUMENTED multi_edit CREATE/PREPEND sentinel - the tool
+# note itself instructs the model to write exactly that ("To CREATE a script: set
+# className ... and make the first edit old_string:\"\""). Treating "" as "omitted"
+# made the documented create path impossible: the model wrote precisely what the
+# docs told it to, and the validator answered "old_string is required" - a
+# complaint it could never satisfy, because it HAD supplied the field. That is an
+# unfixable loop, and it is what a live session kept hitting.
+_EMPTY_STRING_IS_VALUE = {"old_string"}
+
+
+def _apply_documented_sentinels(tool_name, arguments):
+    """Fill sentinels a JSON Schema cannot express, BEFORE validation runs.
+
+    multi_edit: creating a script means `className` PLUS `old_string:""`. If the
+    caller supplies className (so the intent is unambiguously "create") and omits
+    old_string entirely, the sentinel is what was meant - supply it rather than
+    rejecting a call the model was told was correct.
+
+    Deliberately narrow: only fires for multi_edit, only when className is present
+    (an ordinary edit never passes className), and only when old_string is absent.
+    An edit that simply forgot old_string still gets the corrective error.
+    """
+    if tool_name != "multi_edit" or not isinstance(arguments, dict): return
+    edits = arguments.get("edits")
+    if not isinstance(edits, list) or not arguments.get("className"): return
+    for edit in edits:
+        if isinstance(edit, dict) and "old_string" not in edit:
+            edit["old_string"] = ""
+
+
+def _normalize_tool_arguments(schema, arguments, tool_name="tool", lenient=False, warnings=None):
     """Recursively coerce and validate the practical JSON-Schema subset used by MCP.
 
     Supports nested objects/arrays, defaults, const/enum, nullable type unions,
@@ -1072,9 +1686,19 @@ def _normalize_tool_arguments(schema, arguments, tool_name="tool"):
         try: arguments=json.loads(arguments)
         except Exception: raise RuntimeError(f"{tool_name}: parameters must be a JSON object")
     if not isinstance(arguments,dict): raise RuntimeError(f"{tool_name}: parameters must be an object, got {type(arguments).__name__}")
+    _apply_documented_sentinels(tool_name, arguments)
     root=schema if isinstance(schema,dict) else {"type":"object","properties":{}}
 
     def fail(path,msg): raise ValueError(f"{path} {msg}".strip())
+    def soft(path,msg):
+        # A constraint the engine itself will judge (pattern, bounds, uniqueness,
+        # unknown keys). Strict mode rejects it; lenient mode - used AFTER the
+        # repair pass - records it and lets the call through so the engine's own
+        # message, which knows its real rules, is what the model sees.
+        if lenient:
+            if warnings is not None and len(warnings)<20: warnings.append(f"{path} {msg}".strip())
+            return
+        fail(path,msg)
     def convert(value,spec,path,depth=0):
         if depth>32: fail(path,"schema/value nesting exceeds 32 levels")
         spec=spec if isinstance(spec,dict) else {}
@@ -1093,7 +1717,7 @@ def _normalize_tool_arguments(schema, arguments, tool_name="tool"):
             if "oneOf" in spec and len(successes)>1:
                 # Identical/coercion-equivalent branches are harmless; genuinely
                 # ambiguous values are rejected before a server interprets them.
-                if any(x!=successes[0] or type(x) is not type(successes[0]) for x in successes[1:]): fail(path,"matches multiple incompatible oneOf branches")
+                if any(x!=successes[0] or type(x) is not type(successes[0]) for x in successes[1:]): soft(path,"matches multiple incompatible oneOf branches")
             value=successes[0]
         types=spec.get("type")
         if isinstance(types,list):
@@ -1111,12 +1735,12 @@ def _normalize_tool_arguments(schema, arguments, tool_name="tool"):
         if typ=="string":
             if isinstance(value,(dict,list)): fail(path,"must be a string")
             value=str(value)
-            if spec.get("minLength") is not None and len(value)<spec["minLength"]: fail(path,f"needs at least {spec['minLength']} character(s)")
-            if spec.get("maxLength") is not None and len(value)>spec["maxLength"]: fail(path,f"allows at most {spec['maxLength']} character(s)")
+            if spec.get("minLength") is not None and len(value)<spec["minLength"]: soft(path,f"needs at least {spec['minLength']} character(s)")
+            if spec.get("maxLength") is not None and len(value)>spec["maxLength"]: soft(path,f"allows at most {spec['maxLength']} character(s)")
             if spec.get("pattern") is not None:
                 try: matched=re.search(spec["pattern"],value)
                 except re.error as exc: fail(path,f"has invalid schema pattern: {exc}")
-                if not matched: fail(path,f"must match pattern {spec['pattern']}")
+                if not matched: soft(path,f"must match pattern {spec['pattern']}")
         elif typ=="integer":
             if isinstance(value,bool): fail(path,"must be an integer")
             if isinstance(value,float) and not value.is_integer(): fail(path,"must be a whole integer")
@@ -1146,11 +1770,11 @@ def _normalize_tool_arguments(schema, arguments, tool_name="tool"):
             if not isinstance(value,list): value=[value]
             item_spec=spec.get("items") or {}
             value=[convert(x,item_spec,f"{path}[{i}]",depth+1) for i,x in enumerate(value)]
-            if spec.get("minItems") is not None and len(value)<spec["minItems"]: fail(path,f"needs at least {spec['minItems']} item(s)")
-            if spec.get("maxItems") is not None and len(value)>spec["maxItems"]: fail(path,f"allows at most {spec['maxItems']} item(s)")
+            if spec.get("minItems") is not None and len(value)<spec["minItems"]: soft(path,f"needs at least {spec['minItems']} item(s)")
+            if spec.get("maxItems") is not None and len(value)>spec["maxItems"]: soft(path,f"allows at most {spec['maxItems']} item(s)")
             if spec.get("uniqueItems"):
                 markers=[json.dumps(x,sort_keys=True,default=str) for x in value]
-                if len(markers)!=len(set(markers)): fail(path,"must contain unique items")
+                if len(markers)!=len(set(markers)): soft(path,"must contain unique items")
         elif typ=="object":
             if isinstance(value,str):
                 try: value=json.loads(value)
@@ -1161,13 +1785,19 @@ def _normalize_tool_arguments(schema, arguments, tool_name="tool"):
                 if k not in out and isinstance(ps,dict) and "default" in ps: out[k]=ps["default"]
                 if k in out: out[k]=convert(out[k],ps,f"{path}.{k}" if path else k,depth+1)
             for k in spec.get("required") or []:
-                if k not in out or out[k] is None or (isinstance(out[k],str) and not out[k].strip()): fail(f"{path}.{k}" if path else k,"is required")
+                if k not in out or out[k] is None: fail(f"{path}.{k}" if path else k,"is required")
+                # An empty/blank string is normally a genuine omission, but for a
+                # content-matching sentinel field any string IS the value - "" means
+                # "create/prepend", and whitespace can be real text to match. See
+                # _EMPTY_STRING_IS_VALUE.
+                if isinstance(out[k],str) and not out[k].strip() and k not in _EMPTY_STRING_IS_VALUE:
+                    fail(f"{path}.{k}" if path else k,"is required")
             extra=spec.get("additionalProperties",True); unknown=[k for k in out if k not in props]
-            if extra is False and unknown: fail(path,"contains unsupported parameter(s): "+", ".join(sorted(unknown)))
+            if extra is False and unknown: soft(path,"contains unsupported parameter(s): "+", ".join(sorted(unknown)))
             if isinstance(extra,dict):
                 for k in unknown: out[k]=convert(out[k],extra,f"{path}.{k}" if path else k,depth+1)
-            if spec.get("minProperties") is not None and len(out)<spec["minProperties"]: fail(path,f"needs at least {spec['minProperties']} properties")
-            if spec.get("maxProperties") is not None and len(out)>spec["maxProperties"]: fail(path,f"allows at most {spec['maxProperties']} properties")
+            if spec.get("minProperties") is not None and len(out)<spec["minProperties"]: soft(path,f"needs at least {spec['minProperties']} properties")
+            if spec.get("maxProperties") is not None and len(out)>spec["maxProperties"]: soft(path,f"allows at most {spec['maxProperties']} properties")
             value=out
         elif typ=="null" and value is not None: fail(path,"must be null")
         if "const" in spec and value!=spec["const"]: fail(path,f"must equal {spec['const']!r}")
@@ -1177,13 +1807,55 @@ def _normalize_tool_arguments(schema, arguments, tool_name="tool"):
             if exact is None: fail(path,"must be one of: "+", ".join(map(str,spec["enum"])))
             value=exact
         if isinstance(value,(int,float)) and not isinstance(value,bool):
-            if spec.get("minimum") is not None and value<spec["minimum"]: fail(path,f"must be >= {spec['minimum']}")
-            if spec.get("maximum") is not None and value>spec["maximum"]: fail(path,f"must be <= {spec['maximum']}")
-            if spec.get("exclusiveMinimum") is not None and value<=spec["exclusiveMinimum"]: fail(path,f"must be > {spec['exclusiveMinimum']}")
-            if spec.get("exclusiveMaximum") is not None and value>=spec["exclusiveMaximum"]: fail(path,f"must be < {spec['exclusiveMaximum']}")
+            if spec.get("minimum") is not None and value<spec["minimum"]: soft(path,f"must be >= {spec['minimum']}")
+            if spec.get("maximum") is not None and value>spec["maximum"]: soft(path,f"must be <= {spec['maximum']}")
+            if spec.get("exclusiveMinimum") is not None and value<=spec["exclusiveMinimum"]: soft(path,f"must be > {spec['exclusiveMinimum']}")
+            if spec.get("exclusiveMaximum") is not None and value>=spec["exclusiveMaximum"]: soft(path,f"must be < {spec['exclusiveMaximum']}")
         return value
     try: return convert(arguments,root,"parameters")
     except ValueError as exc: raise RuntimeError(f"{tool_name}: invalid parameters: {exc}") from None
+
+
+def _resilient_arguments(schema, arguments, tool_name="tool"):
+    """Validate a native engine call, REPAIRING what a machine can safely repair.
+
+    Order: (1) strict validation - a clean call is passed through untouched and
+    costs nothing; (2) on failure, `schema_repair` fixes the usual model slips
+    (stringified numbers/JSON, {x,y,z} for vectors, enum case, renamed keys,
+    wrapper envelopes, clamped ranges, dropped unsupported keys) and the result
+    is re-validated leniently; (3) only if a REQUIRED value is genuinely absent
+    does the call fail - and then with the tool's signature and a copy-ready
+    minimal call, not just a path.
+
+    Returns (clean_arguments, notes). `notes` is empty for a clean call.
+    """
+    try:
+        return _normalize_tool_arguments(schema, arguments, tool_name), []
+    except RuntimeError as first:
+        if _repair is None: raise
+        repaired, notes = _repair.repair_arguments(schema, arguments, tool_name)
+        warnings=[]
+        try:
+            clean = _normalize_tool_arguments(schema, repaired, tool_name, lenient=True, warnings=warnings)
+        except RuntimeError as second:
+            hint = _repair.describe(schema, tool_name)
+            raise RuntimeError(f"{second}" + (f"\n{hint}" if hint else "")) from None
+        notes = list(notes) + [f"left for the engine to judge: {w}" for w in warnings]
+        return clean, notes
+
+
+def _annotate_repairs(result, notes):
+    """Append the repair notes to a tool result so the model learns the shape."""
+    if not notes or not isinstance(result, dict): return result
+    try:
+        line = "[schema auto-repair] " + "; ".join(notes[:8]) + (" ..." if len(notes) > 8 else "")
+        log(f"schema auto-repair: {'; '.join(notes[:4])}", "yl")
+        out = dict(result)
+        out["text"] = (str(out.get("text") or "") + ("\n" if out.get("text") else "") + line)
+        out["schemaRepairs"] = notes[:20]
+        return out
+    except Exception:
+        return result
 
 
 def _schema_risk_analysis(schema):
@@ -1288,6 +1960,15 @@ def _catalog_score(identifier, item, words):
     return sum(6 for w in words if w in name_text) + sum(2 for w in words if w in body)
 
 def _build_skill_tool_mesh(request, engine, skills, virtual_tools, direct_limit=32, skill_limit=30, virtual_limit=24):
+    # The limits are CLAMPED here, never rejected. The advertised schemas
+    # therefore declare minimum:1 and let this floor do the work.
+    #
+    # They used to declare minimum:8 (and 4 for virtual tools), which made the
+    # schema STRICTER than the implementation: a caller asking for 5 skills got
+    # "parameters.max_skills must be >= 8" instead of simply being raised to 8 -
+    # even though that is exactly what this line would have done. A hard schema
+    # floor on a value the handler already clamps is a rejection with no purpose,
+    # and it produced a live error loop on ms_studio_director.
     intent=_infer_request_intent(request,engine); words=_request_words(request+" "+" ".join(intent["signals"]+intent["productPillars"])); engine=str(engine or "general").lower()
     direct_limit=max(8,min(32,int(direct_limit or 32)));skill_limit=max(8,min(40,int(skill_limit or 30)));virtual_limit=max(4,min(30,int(virtual_limit or 24)))
     # Direct tools: cross-cutting execution specialists are always present, then
@@ -1380,13 +2061,1524 @@ def _build_skill_tool_mesh(request, engine, skills, virtual_tools, direct_limit=
         "executionPattern":["inspect project and preserve conventions","turn inferred intent into one playable vertical slice","implement core loop before breadth","integrate art, controls, camera, animation, VFX, audio and UI around the loop","add architecture, authority, persistence and lifecycle safety","profile the weakest target and optimize measured bottlenecks","playtest complete states, fix defects and read back final evidence"],
     }
 
+# ── Roblox build/verify workflow tools (6.17.7) ──────────────────────────
+# These compose the official Studio MCP tools into the sequences a builder
+# actually repeats. They never fabricate an engine action: every one of them
+# either reads real state back or returns the exact native calls to make. When
+# the engine is unavailable they say so plainly rather than inventing a result.
+
+# Console lines that are noise, not failures. Roblox prints an enormous amount of
+# deprecation chatter and plugin output; ranking a deprecation warning as a
+# failure trains the model to "fix" things that are not broken.
+_ROBLOX_NOISE = re.compile(
+    r"(?i)(deprecat|will be removed|loaded plugin|plugin (?:loaded|unloaded)|"
+    r"unknown global|script timeout: *\d+ms|running on|coregui)"
+)
+_ROBLOX_FATAL = re.compile(
+    r"(?i)(attempt to index nil|attempt to call a nil|is not a valid member|"
+    r"stack begin|stack end|infinite yield|unable to cast|"
+    r"too many (?:events|iterations)|out of memory|segmentation)"
+)
+_ROBLOX_WARN = re.compile(r"(?i)(yield|warning|caution|may not|should be|unused)")
+
+# The boundary mistakes that actually break shipped Roblox games, as opposed to
+# style preferences. Each entry is (regex, severity, what it means, the fix).
+_SCRIPT_RULES = [
+    (re.compile(r"(?i)ServerScriptService|ServerStorage"),
+     "info", "This script lives in a server-only container.",
+     "Server containers are invisible to clients - correct for authority, but a LocalScript here will never run."),
+    (re.compile(r"(?i)GetService\s*\(\s*[\"']Players[\"']\s*\)"),
+     "info", "Uses the Players service.", ""),
+    (re.compile(r"(?i)require\s*\(\s*\d{5,}\s*\)"),
+     "warn", "Requires a raw asset id instead of a script reference.",
+     "Prefer requiring a ModuleScript by instance. A raw id breaks in Team Create when the asset is re-uploaded."),
+    (re.compile(r"(?i)Instance\.new\s*\(\s*[\"']?(RemoteEvent|RemoteFunction)"),
+     "warn", "Creates a RemoteEvent/RemoteFunction at runtime.",
+     "Create remotes once in a server script and reference them; runtime creation desyncs clients."),
+    (re.compile(r"(?i)\.OnServerEvent\s*:\s*Connect\s*\(\s*function\s*\(\s*\)"),
+     "high", "A RemoteEvent handler ignores the player argument.",
+     "The first argument is always the calling player. Ignoring it means you cannot validate who is asking."),
+    (re.compile(r"(?i)FireAllClients|FireClient"),
+     "info", "Sends a remote to clients.", "Confirm the payload cannot leak hidden state."),
+    (re.compile(r"(?i)while\s+true\s+do(?![^e]*task\.wait|[^e]*wait\s*\()"),
+     "high", "An unbounded loop with no visible yield.",
+     "Every server loop needs task.wait(); without it the thread is killed and the game hangs."),
+    (re.compile(r"(?i)for\s+.*\s+do(?![^e]*task\.wait|[^e]*wait\s*\()\s*\n\s*[^\n]*(?:clone|findfirst|getchildren)"),
+     "warn", "A tight loop over instances without a yield.",
+     "Bound the iteration or add task.wait() to avoid a long freeze on large hierarchies."),
+    (re.compile(r"(?i)wait\s*\(\s*\)"),
+     "warn", "Uses the deprecated global wait().",
+     "Use task.wait() - the global wait() is throttled and will be removed."),
+    (re.compile(r"(?i)game\.Players\.LocalPlayer"),
+     "high", "References LocalPlayer.",
+     "LocalPlayer is nil on the server. If this is a server script the line will error at runtime."),
+    (re.compile(r"(?i)humanoid:TakeDamage|Health\s*=\s*0"),
+     "warn", "Applies damage directly.",
+     "Prefer Humanoid:TakeDamage on the server; setting Health from a client is exploitable."),
+    (re.compile(r"(?i)loadstring|getfenv|setfenv"),
+     "high", "Uses an environment-manipulation call.",
+     "loadstring cannot run on the client and is restricted on the server; avoid copying code from old sources."),
+    (re.compile(r"(?i)math\.random\s*\("),
+     "info", "Uses math.random.",
+     "Fine for cosmetics; for anything the server must agree on, seed it or use Random.new() on the server."),
+]
+
+# Snapshot store for the scene diff, keyed by label. Bounded so a long session
+# cannot grow the bridge's memory without limit.
+_SCENE_SNAPSHOTS = {}
+_SCENE_SNAPSHOT_ORDER = []
+_SCENE_SNAPSHOT_MAX = 12
+
+
+def _roblox_catalogue(manager):
+    """The live Studio tool names, or None when the engine is not reachable.
+
+    Returning None (rather than []) is what lets callers distinguish "Studio is
+    not connected" from "Studio is connected and advertises nothing", which are
+    very different problems with different fixes.
+    """
+    try:
+        tools = manager.list_server_tools("roblox", refresh=False)
+    except Exception:
+        return None
+    if tools is None:
+        return None
+    return sorted(str(t.get("name") or "") for t in tools if t.get("name"))
+
+
+def _roblox_unavailable(what, manager):
+    cat = _roblox_catalogue(manager)
+    return {"text": json.dumps({
+        "available": False,
+        "capability": what,
+        "reason": "The Roblox Studio MCP server is not reachable from the bridge.",
+        "fixes": [
+            "Open Roblox Studio and load a place.",
+            "In Studio: Assistant Settings > MCP Servers, enable the MCP server.",
+            "Confirm the bridge reports roblox as alive via list_commands or ms_bridge_status.",
+        ],
+    }, indent=2), "images": []}
+
+
+def _roblox_read(manager, tool, arguments, timeout=30):
+    """Call a native Studio tool and return its text, or None on any failure.
+
+    Deliberately swallows the error and returns None: these workflow tools use
+    several native calls and must degrade to a useful partial answer rather than
+    aborting on the first one that a given Studio build does not support.
+    """
+    try:
+        r = manager.call_on_server("roblox", tool, arguments or {}, timeout)
+    except Exception:
+        return None
+    if not isinstance(r, dict) or r.get("ok") is False:
+        return None
+    text = r.get("text")
+    return text if isinstance(text, str) else None
+
+
+def _roblox_build_verifier(args, manager):
+    path = str(args.get("path") or "").strip()
+    if not path:
+        raise RuntimeError("path is required (the instance path you claimed to create or change)")
+    if _roblox_catalogue(manager) is None:
+        return _roblox_unavailable("build verification", manager)
+
+    expect = str(args.get("expect") or "").strip()
+    props = [str(p) for p in (args.get("properties") or []) if str(p).strip()]
+    expected = args.get("expected_properties") or {}
+    if not isinstance(expected, dict):
+        expected = {}
+
+    # Read the instance back from the live place. inspect_instance is the native
+    # read; fall back to search_game_tree by name when the path form differs.
+    raw = _roblox_read(manager, "inspect_instance", {"path": path})
+    lookup_used = "inspect_instance"
+    if raw is None:
+        leaf = path.split(".")[-1]
+        raw = _roblox_read(manager, "search_game_tree", {"query": leaf})
+        lookup_used = "search_game_tree"
+
+    if raw is None:
+        return {"text": json.dumps({
+            "verdict": "unverifiable",
+            "path": path,
+            "found": None,
+            "reason": "Studio accepted no read call for this path. The instance may not exist, or the path form may not match this Studio build.",
+            "nextSteps": [
+                "Re-check the path spelling and casing - Roblox paths are case-sensitive.",
+                f"Call search_game_tree with query '{path.split('.')[-1]}' to see whether anything by that name exists at all.",
+                "If it genuinely does not exist, the build step did not take effect and should be retried.",
+            ],
+            "lookupUsed": lookup_used,
+        }, indent=2), "images": []}
+
+    # Parse the read result conservatively: whatever JSON we can recover, plus the
+    # raw text so the model can see the real evidence rather than our summary.
+    parsed = None
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        parsed = None
+
+    found = parsed is not None
+    checks = []
+    if expected:
+        actual = {}
+        if isinstance(parsed, dict):
+            # Properties may sit at the top level or under a "properties" key.
+            src = parsed.get("properties") if isinstance(parsed.get("properties"), dict) else parsed
+            for k in expected:
+                actual[k] = src.get(k) if isinstance(src, dict) else None
+        for k, want in expected.items():
+            got = actual.get(k)
+            checks.append({
+                "property": k,
+                "expected": want,
+                "actual": got,
+                "match": str(got) == str(want),
+            })
+    if props and isinstance(parsed, dict):
+        src = parsed.get("properties") if isinstance(parsed.get("properties"), dict) else parsed
+        for k in props:
+            if any(c["property"] == k for c in checks):
+                continue
+            checks.append({"property": k, "expected": None, "actual": (src or {}).get(k), "match": None})
+
+    mismatched = [c for c in checks if c["match"] is False]
+    unmatched = [c for c in checks if c["match"] is None]
+
+    verdict = "verified" if found and not mismatched else ("mismatched" if mismatched else ("partially-verified" if unmatched else "found"))
+    if not found:
+        verdict = "unverifiable"
+
+    return {"text": json.dumps({
+        "verdict": verdict,
+        "path": path,
+        "found": found,
+        "expectation": expect or None,
+        "lookupUsed": lookup_used,
+        "propertyChecks": checks,
+        "mismatched": mismatched,
+        "uncompared": unmatched,
+        "rawEvidence": raw[:4000],
+        "note": ("Property comparisons marked match:null could not be resolved from the read payload - treat them as unproven, not as correct."
+                 if unmatched else "All requested comparisons resolved against live Studio state."),
+    }, indent=2), "images": []}
+
+
+def _roblox_script_audit(args, manager):
+    paths = [str(p).strip() for p in (args.get("paths") or []) if str(p).strip()]
+    scope = str(args.get("scope") or "").strip()
+    limit = max(1, min(25, int(args.get("limit") or 10)))
+    if _roblox_catalogue(manager) is None:
+        return _roblox_unavailable("script auditing", manager)
+    if not paths and not scope:
+        raise RuntimeError("provide paths (specific scripts) or scope (a subtree to discover scripts under)")
+
+    if not paths and scope:
+        # Discover scripts under the scope via the native tree search.
+        listing = _roblox_read(manager, "search_game_tree", {"query": scope})
+        if listing:
+            for m in re.finditer(r"([A-Za-z0-9_.]+\.(?:[A-Za-z0-9_]+))", listing):
+                candidate = m.group(1)
+                if candidate not in paths:
+                    paths.append(candidate)
+                if len(paths) >= limit:
+                    break
+        # Discovery found nothing usable. Rather than silently auditing zero
+        # scripts (which reads as "clean"), audit the scope path itself - the
+        # caller named a real instance, so reading it directly is the honest
+        # fallback and usually finds the script they meant.
+        if not paths:
+            paths.append(scope)
+
+    audited = []
+    for p in paths[:limit]:
+        src = _roblox_read(manager, "script_read", {"path": p})
+        if src is None:
+            src = _roblox_read(manager, "script_grep", {"path": p, "pattern": "."})
+        if src is None:
+            audited.append({"path": p, "readable": False, "reason": "No readable source was returned for this path."})
+            continue
+        findings = []
+        for rx, sev, meaning, fix in _SCRIPT_RULES:
+            hits = 0
+            for i, line in enumerate(src.splitlines(), 1):
+                if rx.search(line):
+                    hits += 1
+                    if hits <= 3:
+                        findings.append({
+                            "severity": sev, "line": i, "rule": meaning,
+                            "evidence": line.strip()[:200], "fix": fix or None,
+                        })
+            if hits > 3:
+                findings.append({"severity": sev, "line": None, "rule": meaning,
+                                 "evidence": f"{hits} total occurrences", "fix": fix or None})
+        order = {"high": 0, "warn": 1, "info": 2}
+        findings.sort(key=lambda f: order.get(f["severity"], 3))
+        audited.append({
+            "path": p, "readable": True, "lineCount": len(src.splitlines()),
+            "highCount": sum(1 for f in findings if f["severity"] == "high"),
+            "warnCount": sum(1 for f in findings if f["severity"] == "warn"),
+            "findings": findings[:40],
+        })
+
+    total_high = sum(a.get("highCount", 0) for a in audited)
+    return {"text": json.dumps({
+        "auditedCount": len(audited),
+        "totalHighSeverity": total_high,
+        "scripts": audited,
+        "note": "This audits source that Studio actually returned. Rules target defects that break shipped games, not style. A finding is a prompt to look, not proof of a bug.",
+    }, indent=2), "images": []}
+
+
+def _roblox_playtest_director(args, manager):
+    scenario = str(args.get("scenario") or "").strip()
+    if not scenario:
+        raise RuntimeError("scenario is required (what you want the playtest to prove)")
+    mode = str(args.get("mode") or "play").lower()
+    if mode not in ("play", "run", "server"):
+        mode = "play"
+    inputs = [str(x) for x in (args.get("inputs") or []) if str(x).strip()]
+    expect = str(args.get("expect") or "").strip()
+    auto = bool(args.get("auto_run"))
+
+    dm = "Client" if mode == "play" else ("Server" if mode == "server" else "Edit")
+    plan = [
+        {"step": 1, "action": "get_studio_state", "why": "Confirm a place is loaded and editable before starting.",
+         "arguments": {}},
+        {"step": 2, "action": "start_stop_play", "why": f"Start a real {mode} session.",
+         "arguments": {"datamodel_type": dm, "action": "start"}},
+    ]
+    n = 3
+    for item in inputs:
+        plan.append({"step": n, "action": "user_keyboard_input", "why": f"Exercise: {item}",
+                     "arguments": {"datamodel_type": "Client", "note": item}})
+        n += 1
+    plan.append({"step": n, "action": "get_console_output", "why": "Capture everything the run printed.", "arguments": {}})
+    n += 1
+    plan.append({"step": n, "action": "start_stop_play", "why": "Stop the session cleanly so the place is not left in play mode.",
+                 "arguments": {"datamodel_type": dm, "action": "stop"}})
+
+    result = {
+        "scenario": scenario,
+        "mode": mode,
+        "expectedOutcome": expect or None,
+        "plan": plan,
+        "executed": False,
+        "note": "The plan is returned without acting. Re-run with auto_run true to execute it for real, or make the calls yourself in order.",
+    }
+    if not auto:
+        return {"text": json.dumps(result, indent=2), "images": []}
+
+    # Planning needs no engine, so the plan above is always returned. Executing
+    # does, and this is where that is enforced - after the plan has been built,
+    # so a missing engine costs the user nothing.
+    if _roblox_catalogue(manager) is None:
+        result["executed"] = False
+        result["available"] = False
+        result["reason"] = "The Roblox Studio MCP server is not reachable, so the plan could not be executed."
+        result["fixes"] = [
+            "Open Roblox Studio and load a place.",
+            "In Studio: Assistant Settings > MCP Servers, enable the MCP server.",
+        ]
+        return {"text": json.dumps(result, indent=2), "images": []}
+
+    # Execute for real. Stop at the first failed step: continuing after a failed
+    # start would capture an empty console and read as a false pass.
+    trace = []
+    failed_at = None
+    for step in plan:
+        tool = step["action"]
+        call_args = dict(step["arguments"])
+        call_args.pop("note", None)
+        text = _roblox_read(manager, tool, call_args, timeout=45)
+        ok = text is not None
+        trace.append({"step": step["step"], "action": tool, "ok": ok,
+                      "result": (text or "")[:2000] if ok else None})
+        if not ok:
+            failed_at = step["step"]
+            break
+        # A started session needs a moment to actually construct the world before
+        # input is meaningful; without this the first input lands on nothing.
+        if tool == "start_stop_play" and step["step"] == 2:
+            time.sleep(1.5)
+
+    console = ""
+    for t in trace:
+        if t["action"] == "get_console_output" and t.get("result"):
+            console = t["result"]
+            break
+    triage = None
+    if console:
+        try:
+            triage = json.loads(_roblox_error_triage({"output": console})["text"])
+        except Exception:
+            triage = None
+
+    result.update({
+        "executed": True,
+        "failedAtStep": failed_at,
+        "trace": trace,
+        "consoleIssues": (triage or {}).get("realIssues"),
+        "consoleFindings": (triage or {}).get("findings", [])[:20],
+        "note": ("Executed the plan against live Studio. Read the trace: a step with ok:false is where it stopped, "
+                 "and everything after it did not run.") if failed_at is None else
+                (f"Execution stopped at step {failed_at} because that call did not succeed. Later steps did not run - "
+                 "the playtest is incomplete, not passed."),
+    })
+    return {"text": json.dumps(result, indent=2), "images": []}
+
+
+def _roblox_asset_scout(args, manager):
+    query = str(args.get("query") or "").strip()
+    if not query:
+        raise RuntimeError("query is required")
+    kind = str(args.get("kind") or "any").lower()
+    in_place = bool(args.get("in_place"))
+    limit = max(1, min(25, int(args.get("limit") or 8)))
+    if _roblox_catalogue(manager) is None:
+        return _roblox_unavailable("asset scouting", manager)
+
+    if in_place:
+        raw = _roblox_read(manager, "search_game_tree", {"query": query})
+        return {"text": json.dumps({
+            "scope": "current place",
+            "query": query,
+            "results": [{"raw": raw[:6000]} if raw else []],
+            "note": ("Results are the live tree search, verbatim. Read the names from it yourself - "
+                     "this tool never invents an asset id."),
+        }, indent=2), "images": []}
+
+    # Creator Store search via the native asset tool. The exact tool name varies
+    # by Studio build, so try the documented spellings in order and be explicit
+    # about which one answered.
+    used = None
+    raw = None
+    for tool in ("search_asset", "search_assets", "get_asset", "insert_asset"):
+        if tool == "insert_asset":
+            break  # never insert during a search
+        raw = _roblox_read(manager, tool, {"query": query, "asset_type": kind if kind != "any" else None, "limit": limit})
+        if raw:
+            used = tool
+            break
+    if raw is None:
+        return {"text": json.dumps({
+            "scope": "creator store",
+            "query": query,
+            "results": [],
+            "available": False,
+            "note": ("This Studio build advertises no asset-search tool. Do not invent an asset id. "
+                     "Ask the user to search the Creator Store in Studio, or build the asset directly."),
+        }, indent=2), "images": []}
+    return {"text": json.dumps({
+        "scope": "creator store",
+        "query": query,
+        "kind": kind,
+        "toolUsed": used,
+        "raw": raw[:6000],
+        "note": "Raw results from the live tool. Use only ids that appear here - never construct one.",
+    }, indent=2), "images": []}
+
+
+def _roblox_scene_diff(args, manager):
+    action = str(args.get("action") or "").strip().lower()
+    if action == "list":
+        return {"text": json.dumps({
+            "snapshots": [{"label": k, "capturedAt": _SCENE_SNAPSHOTS[k]["at"], "path": _SCENE_SNAPSHOTS[k]["path"],
+                           "instances": len(_SCENE_SNAPSHOTS[k]["flat"])} for k in _SCENE_SNAPSHOT_ORDER],
+        }, indent=2), "images": []}
+
+    if action == "capture":
+        path = str(args.get("path") or "Workspace").strip()
+        label = str(args.get("label") or "").strip() or f"{path}@{int(time.time())}"
+        depth = max(1, min(6, int(args.get("depth") or 3)))
+        if _roblox_catalogue(manager) is None:
+            return _roblox_unavailable("scene capture", manager)
+        raw = _roblox_read(manager, "search_game_tree", {"query": path, "max_depth": depth})
+        if raw is None:
+            raw = _roblox_read(manager, "get_studio_state", {})
+        if raw is None:
+            return {"text": json.dumps({
+                "captured": False, "path": path,
+                "reason": "Studio returned nothing to capture for this path.",
+            }, indent=2), "images": []}
+        # Flatten the read into a {path: line} map so compare is a set operation.
+        flat = {}
+        for line in raw.splitlines():
+            s = line.strip()
+            if s and not s.startswith("#"):
+                flat[s[:160]] = True
+        _SCENE_SNAPSHOTS[label] = {"at": time.time(), "path": path, "flat": flat, "raw": raw[:6000]}
+        _SCENE_SNAPSHOT_ORDER.append(label)
+        while len(_SCENE_SNAPSHOT_ORDER) > _SCENE_SNAPSHOT_MAX:
+            old = _SCENE_SNAPSHOT_ORDER.pop(0)
+            _SCENE_SNAPSHOTS.pop(old, None)
+        return {"text": json.dumps({
+            "captured": True, "label": label, "path": path,
+            "instances": len(flat),
+            "note": "Snapshot recorded. Change the place, capture again, then compare.",
+        }, indent=2), "images": []}
+
+    if action == "compare":
+        before = str(args.get("before") or "").strip()
+        after = str(args.get("after") or "").strip()
+        if before not in _SCENE_SNAPSHOTS or after not in _SCENE_SNAPSHOTS:
+            return {"text": json.dumps({
+                "compared": False,
+                "reason": "One or both snapshot labels are unknown.",
+                "known": list(_SCENE_SNAPSHOTS.keys()),
+            }, indent=2), "images": []}
+        a = _SCENE_SNAPSHOTS[before]["flat"]
+        b = _SCENE_SNAPSHOTS[after]["flat"]
+        added = sorted(set(b) - set(a))
+        removed = sorted(set(a) - set(b))
+        return {"text": json.dumps({
+            "compared": True,
+            "before": before, "after": after,
+            "addedCount": len(added), "removedCount": len(removed),
+            "added": added[:60], "removed": removed[:60],
+            "note": ("This compares the readable tree lines Studio returned, so it reports instance-level "
+                     "additions and removals exactly, and property changes only where a line differs textually."),
+        }, indent=2), "images": []}
+
+    raise RuntimeError("action must be capture, compare or list")
+
+
+def _roblox_error_triage(args):
+    output = args.get("output")
+    read_live = bool(args.get("read_live"))
+    if output is None and not read_live:
+        raise RuntimeError("provide output (raw console text) or set read_live true")
+    if not isinstance(output, str):
+        output = "" if output is None else str(output)
+
+    findings = []
+    for i, line in enumerate(output.splitlines(), 1):
+        s = line.strip()
+        if not s:
+            continue
+        if _ROBLOX_FATAL.search(s):
+            sev = "high"
+        elif _ROBLOX_NOISE.search(s):
+            sev = "noise"
+        elif _ROBLOX_WARN.search(s):
+            sev = "warn"
+        else:
+            continue
+        findings.append({"line": i, "severity": sev, "text": s[:300]})
+
+    order = {"high": 0, "warn": 1, "noise": 2}
+    findings.sort(key=lambda f: order.get(f["severity"], 3))
+    real = [f for f in findings if f["severity"] != "noise"]
+    noise = [f for f in findings if f["severity"] == "noise"]
+
+    # Point at the most likely cause of the top real failure instead of leaving
+    # the model to guess from the raw line.
+    guidance = []
+    for f in real[:3]:
+        t = f["text"].lower()
+        if "attempt to index nil" in t:
+            guidance.append({"for": f["text"][:120],
+                             "likelyCause": "Something was nil when it was indexed - usually a FindFirstChild that returned nothing, or a service fetched with the wrong name.",
+                             "fix": "Guard the lookup and log the miss: use :FindFirstChild() with an if-check, and print the parent and the name you searched for."})
+        elif "is not a valid member" in t:
+            guidance.append({"for": f["text"][:120],
+                             "likelyCause": "The property or child name does not exist on that instance in this build.",
+                             "fix": "Re-read the instance in Studio and use the exact current name; some properties are renamed or removed between versions."})
+        elif "infinite yield" in t:
+            guidance.append({"for": f["text"][:120],
+                             "likelyCause": "A WaitForChild or wait() never resolved - typically waiting on the client for something the server creates, or a typo in the child name.",
+                             "fix": "Add a timeout to WaitForChild, and verify the instance is created on the side that is waiting."})
+        elif "out of memory" in t:
+            guidance.append({"for": f["text"][:120],
+                             "likelyCause": "Unbounded growth - usually instances or connections created without cleanup.",
+                             "fix": "Pool or destroy instances, and :Disconnect() connections you no longer need."})
+    return {"text": json.dumps({
+        "totalLines": len(output.splitlines()) if output else 0,
+        "realIssues": len(real),
+        "noiseLines": len(noise),
+        "findings": findings[:80],
+        "guidance": guidance,
+        "note": ("Deprecation warnings, plugin chatter and normal print output are classified as noise and kept "
+                 "separate so they are not mistaken for failures. Read the raw line before acting."),
+    }, indent=2), "images": []}
+
+
+def _agent_plan_then_act(args):
+    goal = str(args.get("goal") or "").strip()
+    if not goal:
+        raise RuntimeError("goal is required")
+    constraints = [str(c) for c in (args.get("constraints") or []) if str(c).strip()]
+    approve = bool(args.get("approve"))
+    max_steps = max(1, min(12, int(args.get("max_steps") or 8)))
+
+    # A small, general decomposition that works across engines: understand, then
+    # act in the smallest reversible increments, verifying each one.
+    steps = [
+        {"n": 1, "phase": "understand", "action": "Read the real current state before changing anything (inspect the engine, list the catalogue, read the file).",
+         "verifyWith": "A read-back that shows the state you are about to modify."},
+        {"n": 2, "phase": "plan", "action": "State the smallest change that achieves the goal, and what 'done' looks like.",
+         "verifyWith": "An explicit, checkable success condition."},
+        {"n": 3, "phase": "act", "action": "Make the change.",
+         "verifyWith": "The tool result for the change itself."},
+        {"n": 4, "phase": "verify", "action": "Independently read the result back from the engine or file - not from memory.",
+         "verifyWith": "A read that shows the change actually took effect."},
+        {"n": 5, "phase": "iterate", "action": "If verification failed, fix the smallest thing and re-verify. Do not stack a second change on an unverified one.",
+         "verifyWith": "The same read, now passing."},
+        {"n": 6, "phase": "report", "action": "Report what was verified, what was assumed, and anything still open.",
+         "verifyWith": "Use ms_agent_self_check."},
+    ][:max_steps]
+
+    return {"text": json.dumps({
+        "goal": goal,
+        "constraints": constraints,
+        "approved": approve,
+        "steps": steps,
+        "readyToExecute": approve,
+        "note": ("This is the plan, returned before any action. Approved=" + ("true, proceed." if approve else
+                 "false, so nothing was executed - show this plan to the user and re-call with approve true (or "
+                 "just follow the steps yourself).")),
+        "rules": [
+            "Never stack a second change on top of an unverified one.",
+            "Verify by reading the real system, never by recalling what you sent.",
+            "A failed step is information, not a failure to hide - report it plainly.",
+        ],
+    }, indent=2), "images": []}
+
+
+def _agent_self_check(args):
+    task = str(args.get("task") or "").strip()
+    if not task:
+        raise RuntimeError("task is required")
+    did = [str(x) for x in (args.get("did") or []) if str(x).strip()]
+    evidence = [str(x) for x in (args.get("evidence") or []) if str(x).strip()]
+    assumptions = [str(x) for x in (args.get("assumptions") or []) if str(x).strip()]
+    engine = str(args.get("engine") or "").strip() or None
+
+    # A defensible confidence rule, not a vibe: evidence per action, penalised
+    # for every unproven assumption and for any action with no evidence at all.
+    ratio = (len(evidence) / len(did)) if did else 0.0
+    confidence = "high" if (did and ratio >= 1.0 and not assumptions) else \
+                 "medium" if (did and ratio >= 0.6) else \
+                 "low" if did else "unknown"
+
+    unproven = []
+    if not did:
+        unproven.append("No actions were listed, so nothing is actually proven.")
+    if len(evidence) < len(did):
+        unproven.append(f"{len(did) - len(evidence)} action(s) have no recorded evidence that they worked.")
+    for a in assumptions:
+        unproven.append(f"Assumed without proof: {a}")
+
+    return {"text": json.dumps({
+        "task": task,
+        "engine": engine,
+        "actionsTaken": len(did),
+        "evidenceProvided": len(evidence),
+        "assumptions": len(assumptions),
+        "confidence": confidence,
+        "unproven": unproven,
+        "wouldAReviewerAsk": [
+            "Show the read-back that proves the change took effect.",
+            "What did you verify independently rather than infer from your own action?",
+            "What is the smallest thing that could still be broken?",
+            "If this ran on the user's real project, what would they notice first if it failed?",
+        ] + ([f"Engine '{engine}' was named - confirm the check was made against the live engine, not a cached catalogue."] if engine else []),
+        "note": ("Confidence is derived from evidence-per-action, and every unproven assumption lowers it. "
+                 "Report this honestly rather than claiming completion."),
+    }, indent=2), "images": []}
+
+
+def _agent_context_recall(args, manager):
+    query = str(args.get("query") or "").strip().lower()
+    limit = max(1, min(50, int(args.get("limit") or 20)))
+    health = []
+    try:
+        health = manager.health()
+    except Exception:
+        health = []
+    servers = []
+    for h in health[:limit]:
+        row = {"id": h.get("id"), "alive": h.get("alive"), "nativeTools": h.get("tools")}
+        if query and query not in str(h.get("id", "")).lower():
+            continue
+        servers.append(row)
+
+    with plugin_state_lock:
+        companion = dict(plugin_state)
+    companion["connected"] = bool(companion.get("lastSeen") and time.time() - float(companion["lastSeen"]) < 20)
+
+    studio = None
+    try:
+        studio = probe_studio()
+    except Exception:
+        studio = None
+
+    return {"text": json.dumps({
+        "query": query or None,
+        "bridgeVersion": BRIDGE_VERSION,
+        "connectedServers": servers,
+        "serverCount": len(health),
+        "robloxStudio": studio,
+        "companionPlugin": companion,
+        "directToolCount": len(BUILTIN_TOOLS),
+        "mediaRelayStaged": (len(MEDIA_RELAY.list_items()) if MEDIA_RELAY is not None else None),
+        "sceneSnapshots": list(_SCENE_SNAPSHOTS.keys()),
+        "howToUse": [
+            "This reports LIVE session state, not conversation history. Re-read it after a long gap instead of guessing.",
+            "If an engine you need is not in connectedServers, it is genuinely not reachable right now - say so rather than assuming it is.",
+            "sceneSnapshots lists what you captured with ms_roblox_scene_diff, so you can compare without re-capturing.",
+        ],
+    }, indent=2), "images": []}
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  NATIVE ENGINE FACADE - dialect translation
+# ══════════════════════════════════════════════════════════════════════════
+# The five ms_native_* tools take ONE engine-neutral vocabulary and translate it
+# into whatever the connected engine actually speaks. Everything below is a pure
+# function of (server, request, live tool catalogue), so it is unit-testable
+# without an engine attached - which is the only way to be sure the translation
+# is right for an engine that is not running. tests/test_native_facade.py pins it.
+
+def _facade_advertised_names(manager, server):
+    """The native tool names the server currently advertises, or None if it is
+    not reachable. Never raises - a dead server is a normal, reportable state."""
+    try:
+        client = manager.clients.get(server)
+        if client is None:
+            return None
+        return {t.get("name") for t in (client.tools_cache or []) if t.get("name")}
+    except Exception:
+        return None
+
+
+def _facade_pick(server, capability, advertised):
+    """Resolve a capability to a real advertised tool name, or None.
+
+    Deliberately consults the LIVE catalogue rather than a hardcoded list: a name
+    that is in our hint table but not advertised would produce exactly the
+    "unknown tool" failure this facade exists to prevent. When the server is
+    unreachable we cannot prove anything, so we report a "cannot verify" outcome
+    instead of guessing.
+    """
+    hints = (_FACADE_NATIVE_HINTS.get(server) or {}).get(capability) or []
+    if advertised is None:
+        return None
+    for cand in hints:
+        if cand in advertised:
+            return cand
+    return None
+
+
+def _facade_roblox_studio_id(args, manager):
+    """Resolve the Roblox studio_id the same way the extension does: reuse the
+    caller's, else the single connected Studio.
+
+    Returns (studio_id, reason). reason is "given", "single" or a refusal code
+    ("none" / "ambiguous"). NEVER guesses between two Studios - running a write
+    against the wrong place is silent data loss.
+    """
+    given = str(args.get("studio_id") or "").strip()
+    if given:
+        return given, "given"
+    try:
+        plugin = plugin_state or {}
+        live = plugin.get("studios")
+        ids = []
+        if isinstance(live, list):
+            for item in live:
+                if isinstance(item, str) and item.strip():
+                    ids.append(item.strip())
+                elif isinstance(item, dict) and str(item.get("id") or "").strip():
+                    ids.append(str(item["id"]).strip())
+        if not ids:
+            # The official Studio MCP advertises tool NAMES, not connected Studio
+            # ids, so the catalogue cannot tell us which place is open. With no
+            # id we must refuse rather than run a place-scoped call blindly.
+            pass
+        ids = list(dict.fromkeys(ids))
+        if len(ids) == 1:
+            return ids[0], "single"
+        if len(ids) > 1:
+            return "", "ambiguous"
+    except Exception:
+        pass
+    return "", "none"
+
+
+def _facade_translate(manager, server, request):
+    """Translate an engine-neutral request into ordered native calls.
+
+    Returns {"ok": bool, "calls": [{"tool","arguments","label"}...],
+             "reason": str, "capability": str}
+    A refusal is a normal, structured answer - never an exception the caller has
+    to decode. `request` keys come from the ms_native_read/write schemas.
+    """
+    operation = str(request.get("operation") or "read").lower()
+    what = str(request.get("what") or "").lower()
+    advertised = _facade_advertised_names(manager, server)
+    if advertised is None:
+        return {"ok": False, "reason": f"server '{server}' is not reachable; start it or call ms_native_debug",
+                "calls": [], "capability": what}
+
+    def limit_value(default, lo=1, hi=400):
+        try:
+            raw = request.get("limit")
+            if raw is None or str(raw).strip() == "":
+                return default
+            return max(lo, min(hi, int(float(raw))))
+        except Exception:
+            return default
+
+    target = str(request.get("target") or "").strip()
+    content = request.get("content")
+    content = "" if content is None else str(content)
+    props = request.get("properties") if isinstance(request.get("properties"), dict) else None
+    node_type = str(request.get("node_type") or "").strip()
+    parent = str(request.get("parent") or "").strip()
+    # The name to give a NEW object, when the caller wants one that differs from
+    # the type. Distinct from `target`, which for Godot is the scene path - using
+    # `target` as the node name would name the node after the .tscn file.
+    additional = str(request.get("name") or request.get("node_name") or "").strip()
+    stud, _stud_reason = _facade_roblox_studio_id(request, manager)
+    mode = str(request.get("mode") or "Edit").strip() or "Edit"
+
+    calls = []
+
+    def need(cap):
+        return _facade_pick(server, cap, advertised)
+
+    # ── READ ────────────────────────────────────────────────────────────────
+    if operation == "read":
+        if server == "roblox":
+            if what in ("tree",):
+                tool = need("read_tree")
+                if not tool:
+                    return {"ok": False, "reason": "roblox does not advertise search_game_tree", "calls": [], "capability": "read_tree"}
+                a = {"datamodel_type": mode, "path": target or "Workspace"}
+                if request.get("query"):
+                    a["keywords"] = str(request["query"])
+                if stud:
+                    a["studio_id"] = stud
+                calls.append({"tool": tool, "arguments": a, "label": "read scene tree"})
+            elif what in ("state", "project"):
+                tool = need("read_state")
+                if not tool:
+                    return {"ok": False, "reason": "roblox does not advertise get_studio_state", "calls": [], "capability": "read_state"}
+                a = {}
+                if stud:
+                    a["studio_id"] = stud
+                calls.append({"tool": tool, "arguments": a, "label": "read studio state"})
+            elif what == "console":
+                tool = need("console")
+                if not tool:
+                    return {"ok": False, "reason": "roblox does not advertise get_console_output", "calls": [], "capability": "console"}
+                a = {}
+                if stud:
+                    a["studio_id"] = stud
+                calls.append({"tool": tool, "arguments": a, "label": "read console"})
+            elif what == "script":
+                tool = need("read_script")
+                if not tool:
+                    return {"ok": False, "reason": "roblox does not advertise script_read", "calls": [], "capability": "read_script"}
+                if not target:
+                    return {"ok": False, "reason": "what=script needs a `target` dot-path", "calls": [], "capability": "read_script"}
+                a = {"target_file": target}
+                if stud:
+                    a["studio_id"] = stud
+                calls.append({"tool": tool, "arguments": a, "label": f"read script {target}"})
+            elif what == "object":
+                tool = need("inspect")
+                if not tool:
+                    return {"ok": False, "reason": "roblox does not advertise inspect_instance", "calls": [], "capability": "inspect"}
+                if not target:
+                    return {"ok": False, "reason": "what=object needs a `target` path", "calls": [], "capability": "inspect"}
+                a = {"path": target}
+                if stud:
+                    a["studio_id"] = stud
+                calls.append({"tool": tool, "arguments": a, "label": f"inspect {target}"})
+            else:
+                return {"ok": False, "reason": f"unsupported read '{what}' for roblox", "calls": [], "capability": what}
+        elif server == "unity":
+            if what == "tree":
+                tool = need("read_tree")
+                if not tool:
+                    return {"ok": False, "reason": "unity does not advertise manage_scene", "calls": [], "capability": "read_tree"}
+                calls.append({"tool": tool, "arguments": {"action": "get_hierarchy", "page_size": limit_value(50, 1, 400)}, "label": "unity get_hierarchy"})
+            elif what == "console":
+                tool = need("read_console")
+                if not tool:
+                    return {"ok": False, "reason": "unity does not advertise read_console", "calls": [], "capability": "console"}
+                a = {"action": "get", "count": limit_value(50, 1, 400)}
+                if request.get("query"):
+                    a["filter_text"] = str(request["query"])
+                calls.append({"tool": tool, "arguments": a, "label": "unity read_console"})
+            elif what in ("state", "project"):
+                tool = need("read_tree")
+                if not tool:
+                    return {"ok": False, "reason": "unity does not advertise manage_scene", "calls": [], "capability": "read_tree"}
+                calls.append({"tool": tool, "arguments": {"action": "get_active"}, "label": "unity active scene"})
+            elif what == "script":
+                tool = need("read_script")
+                if not tool:
+                    return {"ok": False, "reason": "unity does not advertise find_in_file", "calls": [], "capability": "read_script"}
+                if not target:
+                    return {"ok": False, "reason": "what=script needs a `target` asset path", "calls": [], "capability": "read_script"}
+                calls.append({"tool": tool, "arguments": {"uri": target, "pattern": str(request.get("query") or ".")}, "label": f"unity find_in_file {target}"})
+            elif what == "object":
+                tool = need("find_objects")
+                if not tool:
+                    return {"ok": False, "reason": "unity does not advertise find_gameobjects", "calls": [], "capability": "find_objects"}
+                a = {"search_term": target or "*", "page_size": limit_value(25, 1, 400)}
+                calls.append({"tool": tool, "arguments": a, "label": f"unity find {target or '*'}"})
+            else:
+                return {"ok": False, "reason": f"unsupported read '{what}' for unity", "calls": [], "capability": what}
+        elif server == "godot":
+            project = str(request.get("project_path") or "").strip()
+            if what in ("state", "project"):
+                tool = need("project_info")
+                if not tool:
+                    return {"ok": False, "reason": "godot does not advertise get_project_info", "calls": [], "capability": "project_info"}
+                if not project:
+                    return {"ok": False, "reason": "godot needs `project_path` (absolute folder holding project.godot)", "calls": [], "capability": "project_info"}
+                calls.append({"tool": tool, "arguments": {"projectPath": project}, "label": "godot project info"})
+            elif what == "console":
+                tool = need("console")
+                if not tool:
+                    return {"ok": False, "reason": "godot does not advertise get_debug_output", "calls": [], "capability": "console"}
+                calls.append({"tool": tool, "arguments": {}, "label": "godot debug output"})
+            elif what == "tree":
+                tool = need("project_info")
+                if not tool:
+                    return {"ok": False, "reason": "godot does not advertise get_project_info", "calls": [], "capability": "project_info"}
+                if not project:
+                    return {"ok": False, "reason": "godot needs `project_path`", "calls": [], "capability": "project_info"}
+                calls.append({"tool": tool, "arguments": {"projectPath": project}, "label": "godot project info"})
+            else:
+                return {"ok": False, "reason": f"unsupported read '{what}' for godot (scene trees are read through the editor)", "calls": [], "capability": what}
+        elif server == "blender":
+            if what in ("tree", "state", "project"):
+                tool = need("scene")
+                if not tool:
+                    return {"ok": False, "reason": "blender does not advertise get_scene_info", "calls": [], "capability": "scene"}
+                calls.append({"tool": tool, "arguments": {}, "label": "blender scene info"})
+            elif what == "object":
+                tool = need("object")
+                if not tool:
+                    return {"ok": False, "reason": "blender does not advertise get_object_info", "calls": [], "capability": "object"}
+                if not target:
+                    return {"ok": False, "reason": "what=object needs a `target` object name", "calls": [], "capability": "object"}
+                calls.append({"tool": tool, "arguments": {"object_name": target}, "label": f"blender object {target}"})
+            elif what == "console":
+                return {"ok": False, "reason": "blender has no console-read tool; use what=tree for scene truth", "calls": [], "capability": "console"}
+            else:
+                return {"ok": False, "reason": f"unsupported read '{what}' for blender", "calls": [], "capability": what}
+        else:
+            return {"ok": False, "reason": f"unsupported server '{server}'", "calls": [], "capability": what}
+
+    # ── WRITE ───────────────────────────────────────────────────────────────
+    elif operation == "write":
+        if server == "roblox":
+            if what == "script":
+                tool = need("write_script")
+                if not tool:
+                    return {"ok": False, "reason": "roblox does not advertise multi_edit", "calls": [], "capability": "write_script"}
+                if not target:
+                    return {"ok": False, "reason": "what=script needs a `target` dot-path", "calls": [], "capability": "write_script"}
+                a = {"file_path": target, "datamodel_type": mode,
+                     "edits": [{"old_string": "", "new_string": content}]}
+                if stud:
+                    a["studio_id"] = stud
+                calls.append({"tool": tool, "arguments": a, "label": f"write script {target}"})
+            elif what == "code":
+                tool = need("exec_code")
+                if not tool:
+                    return {"ok": False, "reason": "roblox does not advertise execute_luau", "calls": [], "capability": "exec_code"}
+                if not content.strip():
+                    return {"ok": False, "reason": "what=code needs `content` with the Luau to run", "calls": [], "capability": "exec_code"}
+                a = {"code": content, "datamodel_type": mode}
+                if stud:
+                    a["studio_id"] = stud
+                calls.append({"tool": tool, "arguments": a, "label": "execute_luau"})
+            elif what == "properties":
+                tool = need("exec_code")
+                if not tool:
+                    return {"ok": False, "reason": "roblox sets properties through execute_luau, which this server does not advertise", "calls": [], "capability": "exec_code"}
+                if not target or not props:
+                    return {"ok": False, "reason": "what=properties needs `target` and `properties`", "calls": [], "capability": "exec_code"}
+                a = {"code": _roblox_property_setter(target, props), "datamodel_type": mode}
+                if stud:
+                    a["studio_id"] = stud
+                calls.append({"tool": tool, "arguments": a, "label": f"set properties on {target}"})
+            else:
+                return {"ok": False, "reason": f"roblox write '{what}' is not exposed here (use script, code or properties)", "calls": [], "capability": what}
+        elif server == "unity":
+            if what == "script":
+                tool = need("create_script")
+                if not tool:
+                    return {"ok": False, "reason": "unity does not advertise create_script", "calls": [], "capability": "create_script"}
+                if not target:
+                    return {"ok": False, "reason": "what=script needs a `target` asset path (e.g. Assets/Scripts/Player.cs)", "calls": [], "capability": "create_script"}
+                # create_script takes `path` + `contents`; `uri`/`content` are
+                # accepted by OTHER Unity tools (find_in_file takes uri), which is
+                # exactly the mismatch this facade exists to absorb.
+                calls.append({"tool": tool, "arguments": {"path": target, "contents": content}, "label": f"unity create_script {target}"})
+                r = need("refresh")
+                if r:
+                    calls.append({"tool": r, "arguments": {}, "label": "unity refresh"})
+            elif what == "node":
+                tool = need("create_object")
+                if not tool:
+                    return {"ok": False, "reason": "unity does not advertise manage_gameobject", "calls": [], "capability": "create_object"}
+                # Object creation is manage_gameobject(action="create"), NOT
+                # manage_scene - manage_scene only handles scenes and hierarchy.
+                a = {"action": "create", "name": additional or target or node_type or "GameObject"}
+                if node_type:
+                    a["primitive_type"] = node_type
+                if parent:
+                    a["parent"] = parent
+                calls.append({"tool": tool, "arguments": a, "label": f"unity create {additional or target or node_type or 'GameObject'}"})
+            elif what == "scene":
+                tool = need("create_scene")
+                if not tool:
+                    return {"ok": False, "reason": "unity needs manage_scene to create a scene", "calls": [], "capability": "create_scene"}
+                a = {"action": "create", "name": additional or target or "NewScene"}
+                # manage_scene(action="create") saves under a folder; without one
+                # it lands wherever the editor's default is, which is not
+                # reproducible. Assets/Scenes is the Unity convention.
+                a["path"] = "Assets/Scenes/"
+                calls.append({"tool": tool, "arguments": a, "label": f"unity create scene {additional or target or 'NewScene'}"})
+            elif what == "code":
+                return {"ok": False, "reason": "unity does not run arbitrary code; create a script (what=script) and refresh instead", "calls": [], "capability": "code"}
+            elif what == "properties":
+                return {"ok": False, "reason": "unity sets fields through manage_components/action=set_property; pass target + properties via what=node or use ms_call_engine_tool", "calls": [], "capability": "properties"}
+            else:
+                return {"ok": False, "reason": f"unsupported unity write '{what}'", "calls": [], "capability": what}
+        elif server == "godot":
+            project = str(request.get("project_path") or "").strip()
+            if not project:
+                return {"ok": False, "reason": "godot needs `project_path` (absolute folder containing project.godot)", "calls": [], "capability": what}
+            if what == "scene":
+                tool = need("create_scene")
+                if not tool:
+                    return {"ok": False, "reason": "godot does not advertise create_scene", "calls": [], "capability": "create_scene"}
+                if not target:
+                    return {"ok": False, "reason": "what=scene needs `target` as a res:// scene path", "calls": [], "capability": "create_scene"}
+                calls.append({"tool": tool, "arguments": {"projectPath": project, "scenePath": target}, "label": f"godot create_scene {target}"})
+                s = need("save_scene")
+                if s:
+                    calls.append({"tool": s, "arguments": {"projectPath": project, "scenePath": target}, "label": "godot save_scene"})
+            elif what == "node":
+                tool = need("add_node")
+                if not tool:
+                    return {"ok": False, "reason": "godot does not advertise add_node", "calls": [], "capability": "add_node"}
+                if not (target and node_type):
+                    return {"ok": False, "reason": "what=node needs `target` (scenePath) and `node_type`", "calls": [], "capability": "add_node"}
+                # nodeName is the NEW node's name; the parent goes in
+                # parentNodePath. Passing the parent as nodeName (the easy
+                # mistake) silently creates a misnamed child at the scene root.
+                a = {"projectPath": project, "scenePath": target,
+                     "nodeType": node_type,
+                     "nodeName": additional or node_type}
+                if parent:
+                    a["parentNodePath"] = parent
+                if props:
+                    a["properties"] = props
+                calls.append({"tool": tool, "arguments": a, "label": f"godot add_node {additional or node_type}"})
+                s = need("save_scene")
+                if s:
+                    calls.append({"tool": s, "arguments": {"projectPath": project, "scenePath": target}, "label": "godot save_scene"})
+            elif what == "script":
+                return {"ok": False, "reason": "godot MCP has no script-authoring tool; write the .gd file on disk, then run_project", "calls": [], "capability": "script"}
+            elif what == "code":
+                return {"ok": False, "reason": "godot MCP has no arbitrary-code tool; use scene + node operations instead", "calls": [], "capability": "code"}
+            else:
+                return {"ok": False, "reason": f"unsupported godot write '{what}'", "calls": [], "capability": what}
+        elif server == "blender":
+            if what == "code":
+                tool = need("exec_code")
+                if not tool:
+                    return {"ok": False, "reason": "blender does not advertise execute_blender_code", "calls": [], "capability": "exec_code"}
+                if not content.strip():
+                    return {"ok": False, "reason": "what=code needs `content` with the Python to run", "calls": [], "capability": "exec_code"}
+                calls.append({"tool": tool, "arguments": {"code": content}, "label": "execute_blender_code"})
+            elif what == "properties":
+                tool = need("exec_code")
+                if not tool:
+                    return {"ok": False, "reason": "blender sets properties through execute_blender_code", "calls": [], "capability": "exec_code"}
+                if not target or not props:
+                    return {"ok": False, "reason": "what=properties needs `target` and `properties`", "calls": [], "capability": "exec_code"}
+                calls.append({"tool": tool, "arguments": {"code": _blender_property_setter(target, props)}, "label": f"set {target} properties"})
+            elif what in ("script", "node", "scene"):
+                tool = need("exec_code")
+                if not tool:
+                    return {"ok": False, "reason": "blender builds through execute_blender_code, which this server does not advertise", "calls": [], "capability": "exec_code"}
+                if not content.strip():
+                    return {"ok": False, "reason": f"blender has no dedicated '{what}' tool: pass Python in `content` and it runs via execute_blender_code", "calls": [], "capability": "exec_code"}
+                calls.append({"tool": tool, "arguments": {"code": content}, "label": f"blender {what} via code"})
+            else:
+                return {"ok": False, "reason": f"unsupported blender write '{what}'", "calls": [], "capability": what}
+        else:
+            return {"ok": False, "reason": f"unsupported server '{server}'", "calls": [], "capability": what}
+    else:
+        return {"ok": False, "reason": f"unsupported operation '{operation}'", "calls": [], "capability": what}
+
+    # Roblox place-scoped calls need a resolved studio_id. Report the ambiguity
+    # BEFORE issuing anything, exactly like the extension does.
+    if server == "roblox" and not stud and any(
+        c["tool"] in ("execute_luau", "multi_edit", "script_read", "script_search", "get_studio_state",
+                      "search_game_tree", "inspect_instance", "get_console_output") for c in calls
+    ):
+        reason = ("several Studios are connected and no studio_id was given"
+                  if _stud_reason == "ambiguous" else
+                  "no Studio id is known yet")
+        return {"ok": False, "calls": calls, "capability": what,
+                "reason": f"{reason}; call ms_native_read what=state first, then pass studio_id"}
+    return {"ok": True, "calls": calls, "reason": "", "capability": what}
+
+
+def _roblox_property_setter(path, props):
+    """Build Luau that sets properties on one instance, safely.
+
+    Emitted rather than templated inline so the value formatting (Lua literals,
+    Vector3/Color3 for arrays, quoting) is in one place and testable.
+    """
+    lines = ["local target = " + _roblox_path_expr(path), "if not target then return 'target not found' end"]
+    applied = []
+    for key, val in props.items():
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(key)):
+            continue
+        lines.append(f"target.{key} = {_lua_literal(val)}")
+        applied.append(str(key))
+    # json.dumps the joined names so the literal cannot be broken out of even if
+    # the identifier filter above is ever relaxed; the gate and the quoting do
+    # not depend on each other.
+    lines.append("return " + json.dumps("set " + ",".join(applied)))
+    return "\n".join(lines)
+
+
+def _roblox_path_expr(path):
+    """Dot-path -> a Luau expression that resolves it.
+
+    `Workspace.Door.Handle` must WALK each segment. The tempting
+    `game:FindFirstChild("Workspace.Door")` returns nil for every path with a
+    dot in it, because it looks for one child literally named that - so a caller
+    would get "target not found" on a path that plainly exists.
+    """
+    text = str(path or "").strip()
+    if not text:
+        return "nil"
+    # An explicit service-rooted path can be dereferenced directly.
+    if text.startswith("game.") or text.startswith("workspace.") or text.startswith("game:"):
+        return text
+    # Otherwise walk from the DataModel, segment by segment, allowing either
+    # dotted or slashed notation.
+    segments = [s for s in re.split(r"[./]", text) if s]
+    if not segments:
+        return "nil"
+    expr = "game"
+    for seg in segments:
+        expr += ":FindFirstChild(" + json.dumps(seg) + ")"
+    return expr
+
+
+def _lua_literal(val):
+    """Python value -> a Luau literal. Booleans before ints (bool is an int)."""
+    if isinstance(val, bool):
+        return "true" if val else "false"
+    if val is None:
+        return "nil"
+    if isinstance(val, (int, float)):
+        return repr(val)
+    if isinstance(val, (list, tuple)):
+        nums = list(val)
+        if len(nums) == 3 and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in nums):
+            return "Vector3.new(%s, %s, %s)" % tuple(repr(float(x)) for x in nums)
+        return "{" + ", ".join(_lua_literal(x) for x in nums) + "}"
+    if isinstance(val, dict):
+        return "{" + ", ".join(f"{json.dumps(str(k))} = {_lua_literal(v)}" for k, v in val.items()) + "}"
+    return json.dumps(str(val))
+
+
+def _blender_property_setter(target, props):
+    """Build Python that sets properties on one Blender object.
+    Assignment only - never a destructive operator - so a bad name fails soft."""
+    obj = json.dumps(str(target))
+    lines = [f"obj = bpy.data.objects.get({obj})",
+             "if obj is None:",
+             "    print('object not found: ' + %s)" % obj,
+             "else:"]
+    applied = []
+    for key, val in props.items():
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(key)):
+            continue
+        lines.append(f"    obj.{key} = {_python_literal(val)}")
+        applied.append(str(key))
+    # json.dumps the report line too: the identifier gate above already blocks
+    # breakout, and this makes the quoting independent of that gate.
+    lines.append("    print(" + json.dumps("set: " + ",".join(applied)) + ")")
+    return "\n".join(lines)
+
+
+def _python_literal(val):
+    if isinstance(val, bool):
+        return "True" if val else "False"
+    if val is None:
+        return "None"
+    if isinstance(val, (int, float)):
+        return repr(val)
+    if isinstance(val, (list, tuple)):
+        return "[" + ", ".join(_python_literal(x) for x in val) + "]"
+    if isinstance(val, dict):
+        return "{" + ", ".join(f"{json.dumps(str(k))}: {_python_literal(v)}" for k, v in val.items()) + "}"
+    return json.dumps(str(val))
+
+
+def _facade_execute(manager, server, calls, timeout=120):
+    """Run translated calls in order, stopping at the first failure.
+
+    Returns (results, failed_index). The native result of each step is reduced to
+    the text the model needs plus the call it came from, so the model can always
+    see WHY it believes something happened.
+    """
+    results = []
+    for i, call in enumerate(calls):
+        try:
+            raw = manager.call_on_server(server, call["tool"], call.get("arguments") or {}, timeout)
+        except Exception as exc:
+            results.append({"step": i, "tool": call["tool"], "label": call.get("label", ""),
+                            "arguments": call.get("arguments") or {},
+                            "ok": False, "error": f"{type(exc).__name__}: {exc}"})
+            return results, i
+        text = str((raw or {}).get("text") or "")
+        results.append({"step": i, "tool": call["tool"], "label": call.get("label", ""),
+                        "arguments": call.get("arguments") or {},
+                        "ok": True, "text": text[:6000],
+                        "images": len((raw or {}).get("images") or [])})
+    return results, None
+
+
+def _facade_fingerprint(manager, server, request):
+    """A stable, comparable fingerprint of real engine state.
+
+    Deliberately hashes the NORMALISED text rather than returning it raw: the
+    point of a verify call is a short stable token to diff, and the full body
+    would blow up the prompt on a large scene.
+    """
+    translated = _facade_translate(manager, server, {**request, "operation": "read"})
+    if not translated["ok"]:
+        return {"ok": False, "reason": translated["reason"]}
+    results, failed = _facade_execute(manager, server, translated["calls"], timeout=90)
+    if failed is not None:
+        return {"ok": False, "reason": results[-1].get("error") or "read failed", "steps": results}
+    body = "\n".join(r.get("text", "") for r in results)
+    norm = re.sub(r"\d{4}-\d{2}-\d{2}[T ][\d:.]+Z?", "<ts>", body)
+    norm = re.sub(r"[0-9a-f]{8}-[0-9a-f-]{27,}", "<uuid>", norm)
+    digest = hashlib.sha256(norm.encode("utf-8", "replace")).hexdigest()[:24]
+    return {"ok": True, "fingerprint": digest, "bytes": len(body),
+            "preview": norm[:1200], "tools": [r["tool"] for r in results]}
+
+
+def _native_facade_call(name, args, manager):
+    """Handlers for the ms_native_* facade tools, or None if `name` is not one."""
+    if name == "ms_native_capabilities":
+        server = str(args.get("server") or "").strip()
+        if args.get("refresh"):
+            try:
+                manager.list_tools(refresh=True)
+            except Exception:
+                pass
+        health = {h["id"]: h for h in manager.health()}
+        servers = [server] if server else sorted(health) or sorted(_FACADE_NATIVE_HINTS)
+        rows = []
+        for sid in servers:
+            advertised = _facade_advertised_names(manager, sid)
+            caps = _FACADE_NATIVE_HINTS.get(sid) or {}
+            resolvable, missing = {}, []
+            for cap, hints in caps.items():
+                picked = _facade_pick(sid, cap, advertised)
+                if picked:
+                    resolvable[cap] = picked
+                else:
+                    missing.append(cap)
+            rows.append({
+                "server": sid,
+                "alive": bool(health.get(sid, {}).get("alive")),
+                "nativeToolCount": len(advertised) if advertised is not None else 0,
+                "nativeTools": sorted(advertised or []),
+                "facadeCoverage": resolvable,
+                "capabilitiesMissing": missing,
+                "engineToolkit": sorted(n for n, t in (_TOOLKIT.REGISTRY.items() if _TOOLKIT is not None else []) if t["engine"] == sid),
+                "note": ("server not reachable - start it, then re-run with refresh=true"
+                         if advertised is None else
+                         f"{len(resolvable)}/{len(caps)} facade capabilities available on this connection"),
+            })
+        return {"text": json.dumps({
+            "facadeVersion": BRIDGE_VERSION,
+            "engines": rows,
+            "usage": "Call ms_native_read before changes, ms_native_write to make them, ms_native_verify to prove them. "
+                     "Everything runs through the engine's own live tools - the facade only fixes the dialect.",
+        }, indent=2), "images": []}
+
+    if name == "ms_native_debug":
+        server = str(args.get("server") or "").strip()
+        health = {h["id"]: h for h in manager.health()}
+        servers = [server] if server else sorted(health) or sorted(_FACADE_NATIVE_HINTS)
+        rows = []
+        for sid in servers:
+            advertised = _facade_advertised_names(manager, sid)
+            caps = _FACADE_NATIVE_HINTS.get(sid) or {}
+            row = {
+                "server": sid,
+                "alive": bool(health.get(sid, {}).get("alive")),
+                "nativeToolCount": len(advertised) if advertised is not None else 0,
+                "advertisedButUnwrapped": sorted((advertised or set()) - {v for v in
+                    (_facade_pick(sid, c, advertised) for c in caps) if v}),
+                "missingRequired": [c for c in caps if not _facade_pick(sid, c, advertised)],
+            }
+            if sid == "roblox":
+                stud, why = _facade_roblox_studio_id({}, manager)
+                row["studioIdResolution"] = {
+                    "resolved": stud or None, "reason": why,
+                    "advice": ("pass studio_id explicitly" if why == "ambiguous" else
+                               "run ms_native_read what=state to learn the id" if why == "none" else
+                               "studio_id will be injected automatically"),
+                }
+            if args.get("probe") and advertised:
+                try:
+                    row["probe"] = manager.smoke_test(sid)
+                except Exception as exc:
+                    row["probe"] = {"connected": False, "error": f"{type(exc).__name__}: {exc}"}
+            rows.append(row)
+        return {"text": json.dumps({
+            "servers": rows,
+            "interpretation": "If a tool you expect is listed under missingRequired, this connection does not expose it - "
+                              "the facade will refuse rather than emit an unknown tool name. Reconnect or use ms_call_engine_tool "
+                              "with a name from nativeTools.",
+        }, indent=2), "images": []}
+
+    if name == "ms_native_read":
+        server = str(args.get("server") or "").strip()
+        what = str(args.get("what") or "").strip().lower()
+        translated = _facade_translate(manager, server, {
+            "operation": "read", "what": what, "target": args.get("target"),
+            "query": args.get("query"), "limit": args.get("limit"), "studio_id": args.get("studio_id"),
+            "project_path": args.get("project_path"),
+        })
+        if not translated["ok"]:
+            return {"text": json.dumps({"ok": False, "server": server, "what": what,
+                                        "reason": translated["reason"]}, indent=2), "images": []}
+        results, failed = _facade_execute(manager, server, translated["calls"])
+        images = []
+        return {"text": json.dumps({
+            "ok": failed is None, "server": server, "what": what,
+            "nativeCalls": [{"tool": r["tool"], "arguments": r["arguments"]} for r in results],
+            "results": results,
+            "summarise": ("Read the results above; they are the engine's real state, not a cached guess."
+                          if failed is None else "A step failed - see results[-1].error before retrying."),
+        }, indent=2), "images": images}
+
+    if name == "ms_native_write":
+        server = str(args.get("server") or "").strip()
+        what = str(args.get("what") or "").strip().lower()
+        request = {
+            "operation": "write", "what": what, "target": args.get("target"),
+            "content": args.get("content"), "properties": args.get("properties"),
+            "node_type": args.get("node_type"), "parent": args.get("parent"),
+            "mode": args.get("mode"), "studio_id": args.get("studio_id"),
+            "project_path": args.get("project_path"),
+        }
+        translated = _facade_translate(manager, server, request)
+        if not translated["ok"]:
+            return {"text": json.dumps({"ok": False, "server": server, "what": what,
+                                        "reason": translated["reason"],
+                                        "wouldHaveCalled": translated.get("calls") or []}, indent=2), "images": []}
+        if args.get("dry_run"):
+            return {"text": json.dumps({
+                "ok": True, "dryRun": True, "server": server, "what": what,
+                "calls": [{"tool": c["tool"], "arguments": c["arguments"], "label": c.get("label")} for c in translated["calls"]],
+                "note": "Nothing was executed. Remove dry_run to run these exact calls.",
+            }, indent=2), "images": []}
+        timeout = max(1, min(300, int(args.get("timeout_seconds") or 120)))
+        results, failed = _facade_execute(manager, server, translated["calls"], timeout)
+        return {"text": json.dumps({
+            "ok": failed is None, "server": server, "what": what,
+            "results": results,
+            "next": ("Now call ms_native_read for the same target and confirm the new value is really there - "
+                     "do not report success from this call alone."),
+        }, indent=2), "images": []}
+
+    if name == "ms_native_verify":
+        server = str(args.get("server") or "").strip()
+        what = str(args.get("what") or "").strip().lower()
+        request = {"what": what, "target": args.get("target"), "studio_id": args.get("studio_id")}
+        current = _facade_fingerprint(manager, server, request)
+        if not current.get("ok"):
+            return {"text": json.dumps({"ok": False, "server": server, "what": what,
+                                        "reason": current.get("reason"), "steps": current.get("steps")}, indent=2), "images": []}
+        payload = {"ok": True, "server": server, "what": what,
+                   "fingerprint": current["fingerprint"], "bytes": current["bytes"],
+                   "nativeTools": current["tools"], "preview": current["preview"]}
+        before = args.get("before")
+        if before:
+            same = str(before).strip() == current["fingerprint"]
+            payload["verdict"] = "UNCHANGED" if same else "CHANGED"
+            payload["changed"] = not same
+            payload["before"] = before
+            payload["meaning"] = ("The engine state is byte-identical to the earlier capture, so the change did NOT land - "
+                                  "fix the write and try again." if same else
+                                  "The engine state differs from the earlier capture, so something DID change. "
+                                  "Read the target directly to confirm it changed the way you intended.")
+        else:
+            payload["meaning"] = "Pass this fingerprint back as `before` after your next write to get a changed/unchanged verdict."
+        return {"text": json.dumps(payload, indent=2), "images": []}
+
+    if name == "ms_native_batch":
+        server = str(args.get("server") or "").strip()
+        steps = args.get("steps")
+        if not isinstance(steps, list) or not steps:
+            return {"text": json.dumps({"ok": False, "reason": "steps must be a non-empty array"}, indent=2), "images": []}
+        advertised = _facade_advertised_names(manager, server)
+        if advertised is None:
+            return {"text": json.dumps({"ok": False, "reason": f"server '{server}' is not reachable"}, indent=2), "images": []}
+        unknown = [str(s.get("tool")) for s in steps if isinstance(s, dict) and s.get("tool") not in advertised]
+        if unknown:
+            return {"text": json.dumps({
+                "ok": False, "reason": "these tools are not advertised by " + server + ": " + ", ".join(unknown),
+                "advertised": sorted(advertised),
+                "advice": "Use ms_native_capabilities for the dialect-correct alternative, or pick a name from `advertised`.",
+            }, indent=2), "images": []}
+        calls = []
+        for s in steps:
+            if not isinstance(s, dict):
+                continue
+            stud, _why = _facade_roblox_studio_id(s, manager)
+            a = dict(s.get("arguments") or {})
+            if server == "roblox" and stud and "studio_id" not in a:
+                a["studio_id"] = stud
+            calls.append({"tool": str(s.get("tool")), "arguments": a, "label": str(s.get("label") or "")})
+        if args.get("dry_run"):
+            return {"text": json.dumps({"ok": True, "dryRun": True, "server": server,
+                                        "calls": calls, "note": "All tool names verified against the live catalogue."},
+                                       indent=2), "images": []}
+        timeout = max(1, min(300, int(args.get("timeout_seconds") or 120)))
+        results, failed = _facade_execute(manager, server, calls, timeout)
+        return {"text": json.dumps({
+            "ok": failed is None, "server": server,
+            "completed": 0 if failed is None and not results else (len(results) - 1 if failed is not None else len(results)),
+            "total": len(calls), "stoppedAt": failed, "results": results,
+            "next": ("All steps ran - verify the final state with ms_native_verify." if failed is None else
+                     f"Step {failed} failed, so later steps did NOT run. Fix it and re-send only the remaining steps."),
+        }, indent=2), "images": []}
+
+    return None
+
+
 def _builtin_call(name, arguments, manager):
     args = arguments or {}
+    _native = _native_facade_call(name, args, manager)
+    if _native is not None:
+        return _native
     # Load catalogues before early-return handlers such as Studio Director and
     # engine capability mapping. Later handlers reuse the same local snapshots.
     skills = _load_skills()
     virtual_tools = _load_virtual_tools()
     studio_standard = _load_studio_standard()
+    if name == "ms_form_guidance":
+        if FORM_CRAFT is None:
+            return {"text": json.dumps({"available": False, "reason": FORM_CRAFT_ERROR or "form_craft module did not load"}, indent=2), "images": []}
+        action = str(args.get("action") or "table").strip().lower()
+        engine = str(args.get("engine") or "blender").strip().lower()
+        if action == "classify":
+            feature = str(args.get("feature") or "").strip()
+            result = FORM_CRAFT.classify(feature)
+            return {"text": json.dumps({
+                "feature": feature, "engine": engine, **result,
+                "rule": FORM_CRAFT.CORE_RULE,
+            }, indent=2), "images": []}
+        if action == "audit":
+            parts = args.get("parts")
+            if not isinstance(parts, list):
+                raise RuntimeError("action=audit needs 'parts' as an array of feature names or {name, form} objects")
+            return {"text": json.dumps({
+                "engine": engine, **FORM_CRAFT.audit(parts),
+                "rule": FORM_CRAFT.CORE_RULE,
+            }, indent=2), "images": []}
+        if action == "table":
+            return {"text": json.dumps({
+                "engine": engine,
+                "summary": FORM_CRAFT.describe(),
+                "rule": FORM_CRAFT.CORE_RULE,
+                "forms": {fid: {"label": label, "when": why, "how": build}
+                          for fid, (label, why, build) in FORM_CRAFT.FORMS.items()},
+                "guidance": FORM_CRAFT.guidance(engine),
+            }, indent=2), "images": []}
+        raise RuntimeError(f"unknown form guidance action '{action}'")
+    if name == "ms_media_relay":
+        if MEDIA_RELAY is None:
+            return {"text": json.dumps({"available": False, "reason": MEDIA_RELAY_ERROR or "media_relay module did not load"}, indent=2), "images": []}
+        action = str(args.get("action") or "stats").strip().lower()
+        if action == "stats":
+            return {"text": json.dumps({"available": True, **MEDIA_RELAY.stats()}, indent=2), "images": []}
+        if action == "list":
+            items = MEDIA_RELAY.list_items()
+            return {"text": json.dumps({"available": True, "items": items, "count": len(items)}, indent=2), "images": []}
+        if action == "release":
+            item_id = str(args.get("id") or "").strip()
+            if item_id:
+                released = 1 if MEDIA_RELAY.release(item_id) else 0
+                return {"text": json.dumps({"available": True, "released": released, "id": item_id}, indent=2), "images": []}
+            before = len(MEDIA_RELAY.list_items())
+            MEDIA_RELAY.release_all()
+            return {"text": json.dumps({"available": True, "released": before}, indent=2), "images": []}
+        raise RuntimeError(f"unknown media relay action '{action}'")
+    # ── Desktop vision (bridge-side half; tabs are handled extension-side) ──
+    # ms_surface_list spans BOTH halves: the extension owns tabs, the bridge owns
+    # windows. The extension calls ms_app_list / ms_surface_list(windows) and
+    # merges. Called directly from the model, ms_surface_list answers the window
+    # half and tells the caller where the tab half comes from, so a direct call
+    # is useful rather than a dead end.
+    if name in ("ms_app_list", "ms_app_snapshot", "ms_app_read_window", "ms_app_setup_plan", "ms_surface_list"):
+        if DESKTOP_VISION is None:
+            return {"text": json.dumps({"available": False, "reason": DESKTOP_VISION_ERROR or "desktop_vision module did not load"}, indent=2), "images": []}
+        try:
+            if name == "ms_app_list":
+                return {"text": json.dumps(DESKTOP_VISION.list_apps(
+                    query=str(args.get("query") or ""),
+                    include_unknown=bool(args.get("include_unknown")),
+                ), indent=2), "images": []}
+            if name == "ms_app_snapshot":
+                return {"text": json.dumps(DESKTOP_VISION.snapshot(), indent=2), "images": []}
+            if name == "ms_app_setup_plan":
+                return {"text": json.dumps(DESKTOP_VISION.setup_plan(), indent=2), "images": []}
+            if name == "ms_app_read_window":
+                handle = args.get("handle")
+                pid = args.get("pid")
+                return {"text": json.dumps(DESKTOP_VISION.read_window(
+                    handle=int(handle) if handle is not None else None,
+                    pid=int(pid) if pid is not None else None,
+                    title=str(args.get("title") or ""),
+                ), indent=2), "images": []}
+            # ms_surface_list: window half here, tab half via the extension.
+            scope = str(args.get("scope") or "all").lower()
+            wins = DESKTOP_VISION.list_windows(query=str(args.get("query") or ""))
+            payload = {
+                "windows": wins["windows"],
+                "windowCount": wins["count"],
+                "degraded": wins["degraded"],
+                "capabilities": wins["capabilities"],
+                "tabs": [],
+                "tabCount": 0,
+                "tabsNote": "Browser tabs are enumerated by the extension, which owns chrome.tabs. In a Multi-Script chat this field is filled in automatically; when this tool is called directly it is empty.",
+            }
+            if scope == "tabs":
+                payload["windows"], payload["windowCount"] = [], 0
+            return {"text": json.dumps(payload, indent=2), "images": []}
+        except Exception as _surface_exc:
+            raise RuntimeError("desktop vision failed: %s: %s" % (type(_surface_exc).__name__, _surface_exc))
     if name == "ms_list_direct_tools":
         cat=str(args.get("category") or "all").lower();q=str(args.get("query") or "").lower();limit=max(1,min(100,int(args.get("limit") or 30)))
         rows=[]
@@ -1640,6 +3832,24 @@ def _builtin_call(name, arguments, manager):
         if not evidence: priorities = (["evidence"] + [x for x in priorities if x != "evidence"])[:3]
         verdict = "pass" if len(scores) == len(dims) and all(v >= 7 for v in scores.values()) and evidence else "improve"
         return {"text": json.dumps({"objective": args.get("objective"), "verdict": verdict, "scores": scores, "unscored": unscored, "priorityImprovements": priorities, "evidenceCount": len(evidence), "notes": args.get("notes") or []}, indent=2), "images": []}
+    if name == "ms_roblox_build_verifier":
+        return _roblox_build_verifier(args, manager)
+    if name == "ms_roblox_script_audit":
+        return _roblox_script_audit(args, manager)
+    if name == "ms_roblox_playtest_director":
+        return _roblox_playtest_director(args, manager)
+    if name == "ms_roblox_asset_scout":
+        return _roblox_asset_scout(args, manager)
+    if name == "ms_roblox_scene_diff":
+        return _roblox_scene_diff(args, manager)
+    if name == "ms_roblox_error_triage":
+        return _roblox_error_triage(args)
+    if name == "ms_agent_plan_then_act":
+        return _agent_plan_then_act(args)
+    if name == "ms_agent_self_check":
+        return _agent_self_check(args)
+    if name == "ms_agent_context_recall":
+        return _agent_context_recall(args, manager)
     if name == "ms_workflow_plan":
         objective = str(args.get("objective", "")).strip()
         domains = [str(x).strip().lower() for x in (args.get("domains") or []) if str(x).strip()]
@@ -1860,6 +4070,51 @@ def _builtin_call(name, arguments, manager):
 # ══════════════════════════════════════════════════════════════════════════
 #  HARDENED MCP CLIENT  (one per server in config.json)
 # ══════════════════════════════════════════════════════════════════════════
+class _ToolkitCtx(_TOOLKIT.Ctx if _TOOLKIT is not None else object):
+    """Lets engine_toolkit call the connected MCP servers through this bridge."""
+
+    _projects = {}
+
+    def __init__(self, manager):
+        self.manager = manager
+
+    def call(self, server, tool, arguments, timeout=120):
+        return self.manager.call_on_server(server, tool, arguments, timeout)
+
+    def advertised(self, server):
+        return _facade_advertised_names(self.manager, server)
+
+    def studio_id(self, args):
+        return _facade_roblox_studio_id(args or {}, self.manager)
+
+    def project_hint(self, engine):
+        return self._projects.get(engine, "") or str(((_read_config().get("engineProjects") or {}).get(engine)) or "")
+
+    def remember_project(self, engine, path):
+        self._projects[engine] = path
+
+
+def _toolkit_visible_tools(manager):
+    """Toolkit tool definitions for engines this bridge actually has a server for."""
+    if _TOOLKIT is None:
+        return []
+    have = set(manager.clients.keys())
+    out = []
+    for d in _TOOLKIT.definitions():
+        engine = _TOOLKIT.engine_of(d["name"])
+        if engine in have:
+            out.append(dict(d, server=engine))
+    return out
+
+
+def _toolkit_call(name, arguments, manager):
+    spec = _TOOLKIT.REGISTRY[name]
+    clean, notes = _resilient_arguments(spec.get("inputSchema"), arguments, name)
+    out = _TOOLKIT.run(name, clean, _ToolkitCtx(manager))
+    return _annotate_repairs(out, notes)
+
+
+
 class MCPClient:
     def __init__(self, server_id, command, args, env=None):
         self.id = server_id
@@ -2287,6 +4542,16 @@ class MCPManager:
                     log(f"[{sid}] refresh failed: {e}", "yl")
             self.rebuild_index()
         out = [dict(t, server="zeroscript") for t in BUILTIN_TOOLS]
+        out.extend(_toolkit_visible_tools(self))
+        if _companion_execution_available():
+            with plugin_state_lock:
+                companion_mode = str(plugin_state.get("permissionMode") or "off")
+            ceiling = PLUGIN_PERMISSION_RANK.get(companion_mode, 0)
+            out.extend(
+                dict(t, server="roblox-companion")
+                for t in COMPANION_TOOLS
+                if PLUGIN_PERMISSION_RANK.get(str(t.get("permission") or "full"), 3) <= ceiling
+            )
         for sid, client in self.clients.items():
             for t in (client.tools_cache or []):
                 name = t.get("name")
@@ -2304,10 +4569,20 @@ class MCPManager:
         return out
 
     def call(self, name, arguments, timeout):
+        if _TOOLKIT is not None and name not in BUILTIN_TOOL_NAMES and _TOOLKIT.is_toolkit_tool(name):
+            return _toolkit_call(name, arguments, self)
         if name in BUILTIN_TOOL_NAMES:
             tool = BUILTIN_TOOL_BY_NAME[name]
-            clean = _normalize_tool_arguments(tool.get("inputSchema"), arguments, name)
+            try:
+                clean = _normalize_tool_arguments(tool.get("inputSchema"), arguments, name)
+            except RuntimeError as exc:
+                hint = _repair.describe(tool.get("inputSchema"), name) if _repair is not None else ""
+                raise RuntimeError(str(exc) + (f"\n{hint}" if hint else "")) from None
             return _builtin_call(name, clean, self)
+        if name in COMPANION_TOOL_NAMES:
+            tool = COMPANION_TOOL_BY_NAME[name]
+            clean, notes = _resilient_arguments(tool.get("inputSchema"), arguments, name)
+            return _annotate_repairs(_companion_call(name, clean, timeout), notes)
         with self.index_lock:
             entry = self.index.get(name)
         if entry is None:
@@ -2319,8 +4594,8 @@ class MCPManager:
             raise RuntimeError(f"unknown tool '{name}'")
         holder, real_name = entry
         schema = next((t.get("inputSchema") for t in (holder.tools_cache or []) if t.get("name") == real_name), None)
-        clean = _normalize_tool_arguments(schema, arguments, name)
-        return holder.call_tool(real_name, clean, timeout)
+        clean, notes = _resilient_arguments(schema, arguments, name)
+        return _annotate_repairs(holder.call_tool(real_name, clean, timeout), notes)
 
     def list_server_tools(self, server_id, refresh=False):
         client = self._client(server_id)
@@ -2356,8 +4631,8 @@ class MCPManager:
         if tool_name not in advertised:
             raise RuntimeError(f"server '{server_id}' does not advertise tool '{tool_name}'")
         schema = next((t.get("inputSchema") for t in (client.tools_cache or []) if t.get("name") == tool_name), None)
-        clean = _normalize_tool_arguments(schema, arguments, f"{server_id}/{tool_name}")
-        return client.call_tool(tool_name, clean, timeout)
+        clean, notes = _resilient_arguments(schema, arguments, f"{server_id}/{tool_name}")
+        return _annotate_repairs(client.call_tool(tool_name, clean, timeout), notes)
 
     def _client(self, server_id):
         client = self.clients.get(server_id)
@@ -2397,7 +4672,90 @@ class MCPManager:
 mgr = MCPManager()
 clients = set()
 plugin_state_lock = threading.Lock()
-plugin_state = {"lastSeen": None, "pluginVersion": None}
+plugin_state = {
+    "lastSeen": None,
+    "executionLastSeen": None,
+    "pluginVersion": None,
+    "executionEnabled": False,
+    "permissionMode": "off",
+}
+plugin_job_queue = queue.Queue(maxsize=32)
+plugin_pending_lock = threading.Lock()
+plugin_pending = {}
+PLUGIN_PERMISSION_RANK = {"off": 0, "read": 1, "project": 2, "full": 3}
+
+
+def _companion_execution_available():
+    with plugin_state_lock:
+        state = dict(plugin_state)
+    return bool(
+        state.get("executionEnabled") and
+        state.get("sessionToken") and
+        state.get("executionLastSeen") and
+        time.time() - float(state.get("executionLastSeen")) < 20
+    )
+
+
+def _companion_authorized(headers):
+    token = str(headers.get("authorization") or "")
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    with plugin_state_lock:
+        expected = str(plugin_state.get("sessionToken") or "")
+    return bool(expected and token and secrets.compare_digest(token, expected))
+
+
+def _cancel_companion_pending(reason):
+    with plugin_pending_lock:
+        slots = list(plugin_pending.values())
+        plugin_pending.clear()
+    for slot in slots:
+        slot["result"] = {"ok": False, "error": str(reason)[:500]}
+        slot["event"].set()
+
+
+def _companion_call(name, arguments, timeout=120):
+    tool = COMPANION_TOOL_BY_NAME.get(name)
+    if not tool:
+        raise RuntimeError(f"unknown companion tool '{name}'")
+    with plugin_state_lock:
+        state = dict(plugin_state)
+    if not _companion_execution_available():
+        raise RuntimeError("Roblox companion execution is offline. Open its Studio widget and explicitly enable elevated tools.")
+    required = str(tool.get("permission") or "read")
+    mode = str(state.get("permissionMode") or "off")
+    if PLUGIN_PERMISSION_RANK.get(mode, 0) < PLUGIN_PERMISSION_RANK.get(required, 1):
+        raise RuntimeError(f"{name} needs companion permission '{required}', but Studio is set to '{mode}'. Raise it in the plugin widget and retry.")
+    job_id = uuid.uuid4().hex
+    waiter = threading.Event()
+    slot = {"event": waiter, "result": None}
+    with plugin_pending_lock:
+        plugin_pending[job_id] = slot
+    job = {
+        "id": job_id,
+        "tool": name,
+        "arguments": arguments or {},
+        "permission": required,
+        "createdAt": time.time(),
+    }
+    try:
+        plugin_job_queue.put(job, timeout=1)
+        wait_seconds = max(1, min(int(timeout or 120), 180))
+        if not waiter.wait(wait_seconds):
+            raise TimeoutError(f"Roblox companion did not finish {name} within {wait_seconds}s")
+        result = slot.get("result")
+        if not isinstance(result, dict):
+            raise RuntimeError("Roblox companion returned an invalid result")
+        if result.get("ok") is not True:
+            raise RuntimeError(str(result.get("error") or f"{name} failed in Studio")[:2000])
+        payload = result.get("data")
+        text = result.get("text")
+        if text is None:
+            text = json.dumps(payload if payload is not None else {"ok": True}, indent=2)
+        return {"text": str(text)[:1_000_000], "images": []}
+    finally:
+        with plugin_pending_lock:
+            plugin_pending.pop(job_id, None)
 
 
 def _plugin_status_payload(studio=None):
@@ -2405,6 +4763,8 @@ def _plugin_status_payload(studio=None):
     roblox = mgr.clients.get(PRIMARY_SERVER_ID)
     with plugin_state_lock:
         companion = dict(plugin_state)
+    companion.pop("sessionToken", None)
+    companion.pop("executionLastSeen", None)
     companion["connected"] = bool(companion.get("lastSeen") and time.time() - float(companion["lastSeen"]) < 20)
     return {
         "product": "Multi-Script",
@@ -2416,20 +4776,105 @@ def _plugin_status_payload(studio=None):
             "nativeTools": len(roblox.tools_cache) if roblox else 0,
         },
         "directTools": len(BUILTIN_TOOLS),
+        "engineToolkit": (_TOOLKIT.counts() if _TOOLKIT is not None else {}),
+        "companionTools": len(COMPANION_TOOLS),
         "skills": len(_load_skills()),
         "virtualTools": len(_load_virtual_tools()),
         "robloxSkills": sum(1 for v in _load_skills().values() if v.get("engine") == "roblox"),
         "robloxVirtualTools": sum(1 for v in _load_virtual_tools().values() if v.get("engine") == "roblox"),
-        "nativeCountExplanation": "Native tools are only the exact commands currently advertised by Roblox Studio. Multi-Script direct tools, virtual tools and skills are additional layers and are counted separately.",
+        "nativeCountExplanation": "Official native tools, Multi-Script direct tools, and opt-in companion-plugin tools are separate surfaces and are counted separately.",
         "companionPlugin": companion,
     }
 
 
-async def plugin_http_handler(reader, writer):
-    """Tiny loopback-only HTTP surface for the Roblox Studio companion plugin.
+def _media_unavailable():
+    return (503, json.dumps({
+        "error": "the media relay is unavailable in this bridge build",
+        "detail": MEDIA_RELAY_ERROR,
+    }).encode("utf-8"))
 
-    It intentionally exposes status and a bounded heartbeat only. Tool execution
-    remains on the authenticated-by-locality WebSocket path used by the extension.
+
+def _handle_media_request(method, path, request_body):
+    """Media-relay routes. Returns (status, body_bytes).
+
+    Route table (all loopback, no auth token - see the note below):
+      GET    /media/stats              -> policy + current spool usage
+      GET    /media/list               -> staged items (descriptors only)
+      POST   /media/stage              -> {name, mime, dataUrl|base64} -> descriptor
+      POST   /media/prepare            -> {id} -> payloads + manifest
+      POST   /media/release            -> {id} (or {} for all) -> {released}
+      POST   /media/clear              -> drop everything
+
+    Auth note: this port is bound to 127.0.0.1 only (see the HOST constant), so
+    reachability IS the authorisation, exactly like the WebSocket path the
+    extension already uses. A hostile page cannot reach 127.0.0.1:PLUGIN_PORT
+    without already running on this machine, and the relay writes only into its
+    own spool under a generated id - there is no path a caller can steer.
+    """
+    if MEDIA_RELAY is None:
+        return _media_unavailable()
+    route = path.rstrip("/")
+    try:
+        if method == "GET" and route == "/media/stats":
+            return (200, json.dumps(MEDIA_RELAY.stats()).encode("utf-8"))
+        if method == "GET" and route == "/media/list":
+            return (200, json.dumps({"items": MEDIA_RELAY.list_items()}).encode("utf-8"))
+
+        payload = json.loads(request_body.decode("utf-8") or "{}")
+        if not isinstance(payload, dict):
+            raise ValueError("request body must be a JSON object")
+
+        if method == "POST" and route == "/media/stage":
+            data = _media.decode_chunk(payload.get("dataUrl") or payload.get("base64") or "")
+            if not data:
+                raise ValueError("no media bytes were provided")
+            item = MEDIA_RELAY.stage(data, payload.get("name") or "", payload.get("mime") or "")
+            return (200, json.dumps({"ok": True, "item": item}).encode("utf-8"))
+
+        if method == "POST" and route == "/media/prepare":
+            item_id = str(payload.get("id") or "").strip()
+            if not item_id:
+                raise ValueError("an id is required")
+            return (200, json.dumps({"ok": True, "prepared": MEDIA_RELAY.prepare(item_id)}).encode("utf-8"))
+
+        if method == "POST" and route == "/media/release":
+            item_id = str(payload.get("id") or "").strip()
+            if item_id:
+                return (200, json.dumps({"ok": True, "released": 1 if MEDIA_RELAY.release(item_id) else 0}).encode("utf-8"))
+            before = len(MEDIA_RELAY.list_items())
+            MEDIA_RELAY.release_all()
+            return (200, json.dumps({"ok": True, "released": before}).encode("utf-8"))
+
+        if method == "POST" and route == "/media/clear":
+            before = len(MEDIA_RELAY.list_items())
+            MEDIA_RELAY.release_all()
+            return (200, json.dumps({"ok": True, "released": before}).encode("utf-8"))
+
+        return (404, b'{"error":"not found"}')
+    except _media.RelayError as exc:
+        # A refusal the user can act on - a 400, not a 500, and the message is
+        # forwarded verbatim so the panel can show it as-is.
+        return (400, json.dumps({"error": str(exc)}).encode("utf-8"))
+    except (ValueError, json.JSONDecodeError) as exc:
+        return (400, json.dumps({"error": str(exc)}).encode("utf-8"))
+    except Exception as exc:
+        return (500, json.dumps({"error": type(exc).__name__}).encode("utf-8"))
+
+
+async def plugin_http_handler(reader, writer):
+    """Tiny loopback-only HTTP surface for the Roblox Studio companion plugin
+    and for the media relay.
+
+    Companion execution is opt-in, allowlisted, permission-tiered, and protected
+    by a short-lived in-memory bearer token. Jobs can only enter through the
+    existing extension-to-bridge tool channel; this HTTP surface has no enqueue
+    endpoint and never exposes arbitrary code evaluation.
+
+    The media endpoints are the ONE place the bridge accepts a large body. The
+    relay's job is to receive a photo or a clip the user dropped and hand it
+    back as clipboard-pasteable payloads, so its cap is set from the relay's own
+    policy rather than the plugin's 64 KB. Everything else stays tiny, so a
+    malformed/oversized non-media request is refused before a byte is buffered.
     """
     status, body = 200, b""
     try:
@@ -2448,18 +4893,136 @@ async def plugin_http_handler(reader, writer):
                 k, v = line.split(":", 1)
                 headers[k.strip().lower()] = v.strip()
         length = int(headers.get("content-length", "0") or 0)
-        if length < 0 or length > 65536:
-            status, body = 413, b'{"error":"payload too large"}'
+        route = urlsplit(path).path.rstrip("/") or "/"
+        is_media = route.startswith("/media/")
+        # A staged item is base64 in transit, which inflates it by 4/3, plus the
+        # JSON envelope. headroom covers that without letting a caller claim
+        # more than the relay would ever accept.
+        if is_media and MEDIA_RELAY is not None:
+            media_cap = int(_media.MAX_ITEM_BYTES * 4 / 3) + 65536
         else:
-            request_body = await asyncio.wait_for(reader.readexactly(length), timeout=3) if length else b""
-            if method == "GET" and path.rstrip("/") == "/status":
+            media_cap = 65536
+        cap = max(65536, media_cap) if is_media else 65536
+        if length < 0 or length > cap:
+            status, body = 413, json.dumps({
+                "error": "payload too large",
+                "limitBytes": cap,
+            }).encode("utf-8")
+        else:
+            # Media bodies can be tens of MB over loopback; the plugin's 3 s
+            # budget would truncate a normal photo on a busy machine, so media
+            # gets a longer, still-bounded read.
+            read_timeout = 60 if is_media else 3
+            request_body = await asyncio.wait_for(reader.readexactly(length), timeout=read_timeout) if length else b""
+            if method == "GET" and route == "/status":
                 studio = await asyncio.to_thread(probe_studio)
                 body = json.dumps(_plugin_status_payload(studio)).encode("utf-8")
-            elif method == "GET" and path.rstrip("/") == "/catalog":
+            elif method == "GET" and route == "/logs":
+                # The in-extension terminal's fallback channel. The panel normally
+                # follows the log over the WebSocket (which pushes); this exists so
+                # the panel still works, and can still prove the bridge is alive,
+                # on the HTTP surface the extension already has permission to
+                # reach. Loopback-only, read-only, and it exposes nothing but the
+                # same lines the console prints.
+                q = urlsplit(path)
+                try:
+                    since = int((dict(
+                        kv.split("=", 1) for kv in (q.query or "").split("&") if "=" in kv
+                    )).get("since", "0"))
+                except Exception:
+                    since = 0
+                lines, newest = log_since(since, 400)
+                body = json.dumps({
+                    "ok": True, "lines": lines, "newest": newest,
+                    "service": _service_snapshot(),
+                }).encode("utf-8")
+            elif method == "GET" and route == "/catalog":
                 roblox = mgr.clients.get(PRIMARY_SERVER_ID)
                 tools = [dict(t) for t in (roblox.tools_cache or [])] if roblox else []
-                body = json.dumps({"server":"roblox","nativeToolCount":len(tools),"tools":tools,"multiScriptDirectTools":len(BUILTIN_TOOLS),"robloxVirtualTools":sum(1 for v in _load_virtual_tools().values() if v.get("engine")=="roblox"),"robloxSkills":sum(1 for v in _load_skills().values() if v.get("engine")=="roblox"),"explanation":"The native count is the exact official Studio MCP catalogue; Multi-Script capabilities are separate."}).encode("utf-8")
-            elif method == "POST" and path.rstrip("/") == "/plugin/heartbeat":
+                body = json.dumps({"server":"roblox","nativeToolCount":len(tools),"tools":tools,"multiScriptDirectTools":len(BUILTIN_TOOLS),"companionPluginTools":len(COMPANION_TOOLS),"robloxVirtualTools":sum(1 for v in _load_virtual_tools().values() if v.get("engine")=="roblox"),"robloxSkills":sum(1 for v in _load_skills().values() if v.get("engine")=="roblox"),"explanation":"The native count is the exact official Studio MCP catalogue. Multi-Script direct, companion, virtual, and skill capabilities are separate; companion tools appear only after explicit plugin authorization."}).encode("utf-8")
+            elif is_media:
+                status, body = _handle_media_request(method, path, request_body)
+            elif method == "POST" and route == "/plugin/register":
+                data = json.loads(request_body.decode("utf-8") or "{}")
+                if not isinstance(data, dict):
+                    raise ValueError("registration must be an object")
+                mode = str(data.get("permissionMode") or "off").lower()
+                if data.get("executionEnabled") is not True or mode not in ("read", "project", "full"):
+                    status, body = 400, b'{"error":"explicit execution permission is required"}'
+                else:
+                    _cancel_companion_pending("Roblox companion permission session changed")
+                    token = secrets.token_urlsafe(32)
+                    with plugin_state_lock:
+                        plugin_state.update({
+                            "sessionToken": token,
+                            "executionEnabled": True,
+                            "permissionMode": mode,
+                            "pluginVersion": str(data.get("pluginVersion") or "")[:24],
+                            "pluginId": str(data.get("pluginId") or "")[:80],
+                            "lastSeen": time.time(),
+                            "executionLastSeen": time.time(),
+                        })
+                    body = json.dumps({
+                        "ok": True,
+                        "token": token,
+                        "permissionMode": mode,
+                        "toolCount": sum(
+                            1 for tool in COMPANION_TOOLS
+                            if PLUGIN_PERMISSION_RANK.get(str(tool.get("permission") or "full"), 3)
+                            <= PLUGIN_PERMISSION_RANK[mode]
+                        ),
+                        "pollAfterMs": 350,
+                    }).encode("utf-8")
+            elif method == "GET" and route == "/plugin/next":
+                if not _companion_authorized(headers):
+                    status, body = 403, b'{"error":"invalid or expired companion token"}'
+                else:
+                    job = None
+                    while True:
+                        try:
+                            candidate = plugin_job_queue.get_nowait()
+                        except queue.Empty:
+                            break
+                        with plugin_pending_lock:
+                            still_pending = candidate.get("id") in plugin_pending
+                        if still_pending and time.time() - float(candidate.get("createdAt") or 0) <= 185:
+                            job = candidate
+                            break
+                    with plugin_state_lock:
+                        plugin_state["lastSeen"] = time.time()
+                        plugin_state["executionLastSeen"] = time.time()
+                    body = json.dumps({"ok": True, "job": job}).encode("utf-8")
+            elif method == "POST" and route == "/plugin/result":
+                if not _companion_authorized(headers):
+                    status, body = 403, b'{"error":"invalid or expired companion token"}'
+                else:
+                    data = json.loads(request_body.decode("utf-8") or "{}")
+                    if not isinstance(data, dict) or not isinstance(data.get("id"), str):
+                        raise ValueError("result must contain a job id")
+                    with plugin_pending_lock:
+                        slot = plugin_pending.get(data["id"])
+                    if slot is None:
+                        status, body = 404, b'{"error":"unknown or expired job"}'
+                    else:
+                        slot["result"] = data.get("result")
+                        slot["event"].set()
+                        with plugin_state_lock:
+                            plugin_state["lastSeen"] = time.time()
+                            plugin_state["executionLastSeen"] = time.time()
+                        body = b'{"ok":true}'
+            elif method == "POST" and route == "/plugin/unregister":
+                if not _companion_authorized(headers):
+                    status, body = 403, b'{"error":"invalid or expired companion token"}'
+                else:
+                    _cancel_companion_pending("Roblox companion execution was disabled in Studio")
+                    with plugin_state_lock:
+                        plugin_state.pop("sessionToken", None)
+                        plugin_state["executionEnabled"] = False
+                        plugin_state["permissionMode"] = "off"
+                        plugin_state["lastSeen"] = time.time()
+                        plugin_state["executionLastSeen"] = None
+                    body = b'{"ok":true}'
+            elif method == "POST" and route == "/plugin/heartbeat":
                 data = json.loads(request_body.decode("utf-8") or "{}")
                 if not isinstance(data, dict):
                     raise ValueError("heartbeat must be an object")
@@ -2485,8 +5048,14 @@ async def plugin_http_handler(reader, writer):
                 }
                 allowed["lastSeen"] = time.time()
                 with plugin_state_lock:
+                    session = {
+                        key: plugin_state.get(key)
+                        for key in ("sessionToken", "executionEnabled", "permissionMode", "pluginId", "executionLastSeen")
+                        if plugin_state.get(key) is not None
+                    }
                     plugin_state.clear()
                     plugin_state.update(allowed)
+                    plugin_state.update(session)
                 body = b'{"ok":true}'
             else:
                 status, body = 404, b'{"error":"not found"}'
@@ -2494,7 +5063,7 @@ async def plugin_http_handler(reader, writer):
         status, body = 400, json.dumps({"error": str(e)}).encode("utf-8")
     except Exception as e:
         status, body = 500, json.dumps({"error": type(e).__name__}).encode("utf-8")
-    reason = {200: "OK", 400: "Bad Request", 404: "Not Found", 413: "Payload Too Large", 500: "Internal Server Error"}.get(status, "Error")
+    reason = {200: "OK", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 413: "Payload Too Large", 500: "Internal Server Error"}.get(status, "Error")
     response = (f"HTTP/1.1 {status} {reason}\r\nContent-Type: application/json; charset=utf-8\r\n"
                 f"Content-Length: {len(body)}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n").encode("ascii") + body
     writer.write(response)
@@ -2733,6 +5302,9 @@ async def handler(ws):
     peer = getattr(ws, "remote_address", ("?",))[0]
     clients.add(ws)
     log(f"extension connected  ({peer})  [{len(clients)} client(s)]", "gr")
+    log_q = queue.Queue(maxsize=500)
+    _unsub_log = _subscribe_log(ws, log_q)
+    log_pump = asyncio.create_task(_log_pump(ws, log_q))
     try:
         _st, _unity, _godot = await asyncio.gather(
             asyncio.to_thread(probe_studio), asyncio.to_thread(probe_unity), asyncio.to_thread(probe_godot))
@@ -2757,6 +5329,32 @@ async def handler(ws):
             if mtype == "ping":
                 await ws.send(json.dumps({"type": "pong", "id": rid}))
 
+            elif mtype == "bridge_log":
+                # The in-extension terminal asks for the backlog, optionally
+                # filtered by level. `since` is the seq the panel already has, so
+                # a reconnect or a re-open resumes exactly where it left off
+                # instead of replaying everything or silently skipping lines.
+                try:
+                    since = int(msg.get("since") or 0)
+                except Exception:
+                    since = 0
+                lines, newest = log_since(since, msg.get("limit") or 400)
+                want = str(msg.get("level") or "").lower()
+                if want and want != "all":
+                    lines = [r for r in lines if r["level"] == want]
+                await ws.send(json.dumps({
+                    "type": "bridge_log", "id": rid, "lines": lines,
+                    "newest": newest, "service": _service_snapshot(),
+                }))
+
+            elif mtype == "bridge_log_clear":
+                # Clearing is a VIEW operation: we drop the panel's backlog but
+                # never the debugging history - the file on disk is untouched and
+                # stays complete.
+                with _log_lock:
+                    _log_ring.clear()
+                await ws.send(json.dumps({"type": "bridge_log_cleared", "id": rid}))
+
             elif mtype == "studio_status":
                 studio, unity, godot = await asyncio.gather(
                     asyncio.to_thread(probe_studio), asyncio.to_thread(probe_unity), asyncio.to_thread(probe_godot))
@@ -2765,6 +5363,19 @@ async def handler(ws):
                     "studio": studio["place"], "studio_app": studio["app"],
                     "studio_proc": await asyncio.to_thread(_roblox_studio_app_running),
                     "mcp_alive": mgr.any_alive(), "engines": engine_snapshot(studio, unity, godot),
+                }))
+
+            elif mtype == "terminal_probe":
+                # Lightweight liveness probe used by the in-chat terminal panel.
+                #
+                # WHY THIS EXISTS AS ITS OWN FRAME
+                # The panel polls this (and the /logs route on the companion HTTP
+                # port) when the socket is quiet, so the dot and the service
+                # chips stay truthful even mid-reconnect. It answers with the
+                # same shape as /logs so one renderer handles both channels.
+                await ws.send(json.dumps({
+                    "type": "terminal_probe", "id": rid,
+                    "ok": True, "service": _service_snapshot(),
                 }))
 
             elif mtype == "list_tools":
@@ -2864,6 +5475,8 @@ async def handler(ws):
         log(f"handler error: {e}", "rd")
     finally:
         clients.discard(ws)
+        _unsub_log()
+        log_pump.cancel()
         log(f"extension disconnected  [{len(clients)} client(s)]", "yl")
 
 
@@ -3407,7 +6020,7 @@ async def main():
             await broadcast_status()
 
     # Free our own port from a leftover bridge (double-launch / X-closed window /
-    # prior crash) BEFORE binding, so relaunching start.bat "just works" instead
+    # prior crash) BEFORE binding, so relaunching the bridge "just works" instead
     # of dying on WinError 10048. Only ever kills a proven bridge.py; anything
     # else falls through to the friendly bind-error below.
     if await asyncio.to_thread(_reclaim_bridge_port):
@@ -3428,7 +6041,7 @@ async def main():
                 f"the port. Close it, then relaunch. To find it:", "yl")
             log(f"      netstat -ano | findstr {PORT}", "yl")
             log(f"      taskkill /F /PID <the pid from the last column>", "yl")
-            log(f"    Or set a different port before start.bat:  set ZS_BRIDGE_PORT=17614", "yl")
+            log(f"    Or set a different port before launching:  set ZS_BRIDGE_PORT=17614", "yl")
             return
         raise
 

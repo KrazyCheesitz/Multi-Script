@@ -1,3 +1,3 @@
-# Possible future VS Code extension
+# Possible future Visual Studio Code extension
 
-Deferred. A future extension should reuse the local bridge, exact live schemas, validation, diagnostics and security boundaries rather than fork execution logic. No VS Code extension ships in 6.13.0.
+This is intentionally deferred. A future extension may expose bridge health, exact live MCP catalogues, project diagnostics, logs, and safe command previews. It must reuse the same local bridge, schema validator, security boundaries, and engine-native execution paths rather than becoming a second incompatible runtime. No VS Code extension is included in this release.

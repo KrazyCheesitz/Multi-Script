@@ -25,12 +25,13 @@ def static_audit():
     check(all(x.get('engine') for x in skills.values()),'high','implicit-skill-engine','one or more skills lacks explicit engine assignment')
     check(all(x.get('engineExecutionContract') for x in skills.values()),'high','missing-skill-runtime-contract','one or more skills lacks runtime compatibility contract')
     check(all(x.get('engineExecutionContract') for x in virtual.values()),'high','missing-virtual-runtime-contract','one or more specialists lacks runtime compatibility contract')
-    for token in manifest['robloxCompanion']['forbiddenExecutionSurfaces']:
-        check(token not in plugin,'critical','plugin-execution-boundary',f'forbidden plugin execution surface found: {token}')
-    for route in ['/status','/catalog','/plugin/heartbeat']:
-        check(route in plugin,'high','plugin-endpoint-missing',f'expected diagnostic endpoint missing: {route}')
+    companion=manifest['robloxCompanion']
+    check(companion.get('defaultPermission')=='off','critical','plugin-default-permission','companion execution must default Off')
+    check((companion.get('security') or {}).get('arbitraryCodeEvaluation') is False and 'loadstring(' not in plugin,'critical','plugin-arbitrary-eval','arbitrary Lua evaluation appeared')
+    for route in ['/status','/catalog','/plugin/heartbeat','/plugin/register','/plugin/next','/plugin/result','/plugin/unregister']:
+        check(route in plugin,'high','plugin-endpoint-missing',f'expected companion endpoint missing: {route}')
     check('306 reusable workflows' not in store,'medium','stale-store-count','store listing has obsolete workflow count')
-    check('model-targeted' in (ROOT/'docs/RELEASE_NOTES_6.12.0.md').read_text().lower(),'medium','arena-doc-drift','Arena model-targeted behavior is not documented')
+    check('model-targeted' in (ROOT/'docs/release-notes/RELEASE_NOTES_6.12.0.md').read_text().lower(),'medium','arena-doc-drift','Arena model-targeted behavior is not documented')
     schemas=json.load(open(ROOT/'runtime/engine-compatibility-audit.json'))['schemaAudit']
     check(schemas.get('highRisk',0)==0,'high','high-risk-schema','schema audit still reports high-risk built-in contracts')
     return findings
@@ -54,7 +55,7 @@ def critic(skip_tests=False,write=True):
       {'priority':'deferred','item':'Consider a VS Code extension after the bridge protocol and diagnostic contracts remain stable.','reason':'A future editor surface should reuse this bridge rather than fork execution logic.'},
     ]
     verdict='pass' if not blocking and not failed else 'revise'
-    rounds.append({'round':3,'name':'final critic and product opportunity review','verdict':verdict,'findings':final_findings,'evidence':['no forbidden Roblox plugin execution surfaces' if not any(x['code']=='plugin-execution-boundary' for x in final_findings) else 'plugin boundary failure','all catalogue items retain explicit engine/runtime contracts' if not any('engine' in x['code'] or 'runtime-contract' in x['code'] for x in final_findings) else 'catalogue contract failure','release evidence is machine-readable'],'recommendations':recommendations})
+    rounds.append({'round':3,'name':'final critic and product opportunity review','verdict':verdict,'findings':final_findings,'evidence':['companion defaults Off and exposes no arbitrary evaluation' if not any(x['code'] in ('plugin-default-permission','plugin-arbitrary-eval') for x in final_findings) else 'plugin boundary failure','all catalogue items retain explicit engine/runtime contracts' if not any('engine' in x['code'] or 'runtime-contract' in x['code'] for x in final_findings) else 'catalogue contract failure','release evidence is machine-readable'],'recommendations':recommendations})
     report={'product':'Multi-Script','version':json.load(open(ROOT/'runtime/product-manifest.json'))['version'],'generatedAtUnix':round(time.time()),'durationSeconds':round(time.time()-started,3),'verdict':verdict,'rounds':rounds,'testChecks':checks,'summary':{'critical':sum(x['severity']=='critical' for r in rounds for x in r.get('findings',[])),'high':sum(x['severity']=='high' for r in rounds for x in r.get('findings',[])),'medium':sum(x['severity']=='medium' for r in rounds for x in r.get('findings',[])),'recommendations':len(recommendations)}}
     if write: REPORT.write_text(json.dumps(report,indent=2)+'\n')
     return report

@@ -1,3 +1,61 @@
+.zs-enhance-review {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background: rgba(7, 10, 18, .62);
+  backdrop-filter: blur(8px);
+  animation: zs-review-in .16s ease-out;
+}
+.zs-enhance-dialog {
+  width: min(720px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  overflow: hidden;
+  color: var(--zs-ink, #f7f8fb);
+  background: var(--zs-panel, #171b25);
+  border: 1px solid var(--zs-line, rgba(255,255,255,.14));
+  border-radius: 18px;
+  box-shadow: 0 28px 80px rgba(0,0,0,.42);
+}
+.zs-enhance-dialog-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
+.zs-enhance-dialog-head > div { display:flex; flex-direction:column; gap:3px; }
+.zs-enhance-dialog-head b { font-size:16px; }
+.zs-enhance-dialog-head span, .zs-enhance-dialog-meta { color:var(--zs-muted, #aab1c2); font-size:12px; line-height:1.45; }
+.zs-enhance-dialog-head > button {
+  width:30px; height:30px; border:0; border-radius:9px; cursor:pointer;
+  color:inherit; background:rgba(255,255,255,.08); font-size:20px;
+}
+.zs-enhance-dialog label { font-size:12px; font-weight:700; }
+.zs-enhance-dialog textarea {
+  width:100%; min-height:280px; max-height:52vh; resize:vertical; box-sizing:border-box;
+  padding:13px; border-radius:12px; border:1px solid var(--zs-line, rgba(255,255,255,.14));
+  color:inherit; background:rgba(0,0,0,.2); font:12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+  outline:none;
+}
+.zs-enhance-dialog textarea:focus { border-color:var(--zs-accent, #7c8cff); box-shadow:0 0 0 3px color-mix(in srgb, var(--zs-accent, #7c8cff) 20%, transparent); }
+.zs-enhance-dialog-actions { display:flex; justify-content:flex-end; gap:9px; }
+.zs-enhance-dialog-actions button { padding:9px 13px; border-radius:10px; border:1px solid var(--zs-line, rgba(255,255,255,.14)); color:inherit; background:rgba(255,255,255,.06); cursor:pointer; }
+.zs-enhance-dialog-actions .primary { border-color:transparent; color:white; background:var(--zs-accent, #6675f6); font-weight:700; }
+@keyframes zs-review-in { from { opacity:0 } to { opacity:1 } }
+@media (prefers-reduced-motion: reduce) { .zs-enhance-review { animation:none; } }
+
+/* ── In-menu setup tutorial ──────────────────────────────────────────── */
+.zs-tutorial-hero { border-color: color-mix(in srgb, var(--mono-accent, #6675f6) 48%, var(--mono-line)); }
+.zs-tutorial-status { display:grid; gap:6px; margin:10px 0 2px; }
+.zs-tutorial-status span {
+  display:flex; align-items:center; min-height:30px; padding:6px 9px; border-radius:9px;
+  color:var(--mono-ink-2); background:rgba(127,127,127,.08); border:1px solid var(--mono-line);
+  font-size:12px; font-weight:650;
+}
+.zs-tutorial-status span.ok { color:#5fd69a; border-color:rgba(52,211,153,.28); background:rgba(16,185,129,.08); }
+.zs-tutorial-list { margin:8px 0 0; padding-left:22px; color:var(--mono-ink-2); font-size:12px; line-height:1.55; }
+.zs-tutorial-list li + li { margin-top:6px; }
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* overlay.css - Multi-Script in-page UI. Scoped under #zs-root / .zs-* */
 
@@ -148,6 +206,28 @@ html.zs-light #zs-bar.zs-bar-anchored {
    radius so both edges clear the corners cleanly. */
 #zs-bar.zs-bar-anchored.zs-prov-meta { padding-left: 30px; padding-right: 30px; }
 
+/* Notion AI's composer is a rounded "AI card" with a noticeably wider inset than
+   the generic 16px: the input text starts ~20px from the card edge and the card
+   itself is inset from the page column. The generic .zs-bar-anchored padding put
+   the brand/dot hard against the card's rounded corner while the placeholder text
+   sat well inside it, so the bar read as MISALIGNED with the composer it is meant
+   to belong to (the "doesn't align with the Notion chatbar" report).
+   The horizontal inset below is applied IN ADDITION to the frame's own padding by
+   the core (see placeBar's anchored branch), so the bar's content lines up with
+   Notion's own text column rather than the card's outer edge. */
+#zs-bar.zs-bar-anchored.zs-prov-notion {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 20px;
+  padding-right: 20px;
+}
+/* Notion's AI composer sits on a light card in both themes, but its dark mode
+   uses a near-black surface with a very low-contrast border - match that so the
+   separator under the bar does not glow. */
+html.zs-light #zs-bar.zs-bar-anchored.zs-prov-notion {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.07);
+}
+
 #zs-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; cursor: help; }
 #zs-dot.on { background: #34d399; box-shadow: 0 0 8px #34d399; }
 #zs-dot.warn { background: #fbbf24; box-shadow: 0 0 8px #fbbf24; }
@@ -261,16 +341,57 @@ html.zs-light #zs-unstable {
 }
 #zs-stop[data-state="stopping"]:hover { background: #b45309; }
 
-/* bar controls: one neutral icon-button family (Discord, support, switch) */
-#zs-discord, #zs-support {
+/* bar controls: one neutral icon-button family (Discord, support, switch, bridge) */
+#zs-discord, #zs-support, #zs-bridge {
   flex: none; width: 28px; height: 28px; padding: 0;
   display: flex; align-items: center; justify-content: center;
   background: rgba(255, 255, 255, 0.06); color: #b8b8bf;
   border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 8px;
   cursor: pointer; text-decoration: none;
-  transition: background 0.14s ease, color 0.14s ease;
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
 }
-#zs-discord:hover, #zs-support:hover { background: rgba(255, 255, 255, 0.11); color: #ededf0; }
+#zs-discord:hover, #zs-support:hover, #zs-bridge:hover { background: rgba(255, 255, 255, 0.11); color: #ededf0; }
+
+/* Bridge terminal: a LIVE indicator, not a decoration. The dot and the ring
+   colour are driven by data-state, which the core sets from the real bridge
+   WebSocket state - so the icon is a truthful representation of whether the
+   local bridge is up, and clicking it either reports the live status or starts
+   the bridge for you. Uses --ms-accent so it follows the user's chosen theme
+   and accent automatically, exactly like every other themed control. */
+#zs-bridge { position: relative; }
+#zs-bridge::after {
+  content: "";
+  position: absolute; right: -1px; bottom: -1px;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #6b7280;
+  border: 1.5px solid rgba(0, 0, 0, 0.55);
+  transition: background 0.14s ease, box-shadow 0.14s ease;
+}
+#zs-bridge[data-state="live"] { color: #34d399; border-color: rgba(52, 211, 153, 0.45); }
+#zs-bridge[data-state="live"]::after { background: #34d399; box-shadow: 0 0 6px #34d399; }
+#zs-bridge[data-state="starting"] { color: #fbbf24; border-color: rgba(251, 191, 36, 0.45); }
+#zs-bridge[data-state="starting"]::after { background: #fbbf24; box-shadow: 0 0 6px #fbbf24; animation: zs-bridge-pulse 1.1s ease-in-out infinite; }
+#zs-bridge[data-state="down"] { color: #f87171; border-color: rgba(248, 113, 113, 0.4); }
+#zs-bridge[data-state="down"]::after { background: #f87171; }
+#zs-bridge[data-state="busy"] svg { animation: zs-bridge-spin 1.4s linear infinite; }
+@keyframes zs-bridge-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+@keyframes zs-bridge-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+/* The bridge stays reachable at every width - it is the control that STARTS the
+   thing the bar drives, so unlike the social links it must never be hidden by
+   the narrow-width rules below. */
+
+/* Composer-width responsive mode. The core sets these classes from the bar's
+   measured width, so a centered Notion composer compacts correctly even on a
+   very wide viewport. Secondary links remain available in the ⋯/switch menu. */
+#zs-bar.zs-bar-narrow { gap: 6px; padding-left: 10px; padding-right: 10px; }
+#zs-bar.zs-bar-narrow #zs-discord,
+#zs-bar.zs-bar-narrow #zs-support { display: none; }
+#zs-bar.zs-bar-narrow #zs-switch-name {
+  display:block; max-width:72px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+#zs-bar.zs-bar-compact { gap: 5px; padding-left: 8px; padding-right: 8px; }
+#zs-bar.zs-bar-compact #zs-switch-name { display:none; }
+#zs-bar.zs-bar-compact #zs-action:not(:disabled) + #zs-chat-only { display:none; }
 
 /* model switcher: names the current AI and opens the panel at Switch AI */
 #zs-switch {
@@ -787,6 +908,9 @@ ol.flex-col-reverse > div.w-full:not(.mx-auto) > .zs-chip {
 /* semantic state kept, but as a thin muted stripe rather than a bright bar */
 .zs-banner.limit { border-left: 2px solid rgba(239, 68, 68, 0.55); }
 .zs-banner.warn { border-left: 2px solid rgba(251, 191, 36, 0.5); }
+/* Informational / success banner (e.g. the pacing self-check result). */
+.zs-banner.ok { border-left: 2px solid rgba(52, 211, 153, 0.6); }
+.zs-banner.ok .zs-banner-m { white-space: pre-line; }
 .zs-banner-t { font-weight: 600; color: #f4f4f6; margin-bottom: 6px; }
 .zs-banner-m { color: #9a9aa2; line-height: 1.5; margin-bottom: 12px; }
 .zs-banner-acts { display: flex; gap: 8px; }
@@ -957,12 +1081,14 @@ html.zs-light #zs-state.zs-state-warn { color: #b91c1c; }
 html.zs-light #zs-bar.tone-active #zs-state b { color: #059669; }
 html.zs-light #zs-discord,
 html.zs-light #zs-support,
+html.zs-light #zs-bridge,
 html.zs-light #zs-switch {
   background: rgba(0, 0, 0, 0.05); color: #4b5563;
   border-color: rgba(0, 0, 0, 0.12);
 }
 html.zs-light #zs-discord:hover,
 html.zs-light #zs-support:hover,
+html.zs-light #zs-bridge:hover,
 html.zs-light #zs-switch:hover { background: rgba(0, 0, 0, 0.09); color: #1f2430; }
 html.zs-light #zs-action:disabled {
   background: rgba(0, 0, 0, 0.05); color: rgba(0, 0, 0, 0.35); border-color: rgba(0, 0, 0, 0.08);
@@ -1039,7 +1165,10 @@ html.zs-light .zs-profile-opt.active { border-color:#6554d9; background:rgba(101
 .zs-menu-health { margin-left:auto; font-size:9px; text-transform:uppercase; letter-spacing:.6px; padding:2px 7px; border-radius:10px; color:#aaa; background:rgba(255,255,255,.06); }
 .zs-menu-health.on { color:#76e2ae; background:rgba(52,211,153,.12); }
 .zs-menu-health.off { color:#f49a9a; background:rgba(248,113,113,.10); }
-.zs-menu-tabs { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; padding:8px 10px; border-bottom:1px solid rgba(255,255,255,.07); position:sticky; top:0; z-index:2; background:#161618; }
+/* auto-fit, not a fixed 4 columns: the tab set grew from 4 to 7 when the
+   settings were regrouped, and a hard-coded repeat(4,1fr) would leave the last
+   row ragged. auto-fit keeps every row full at any count or panel width. */
+.zs-menu-tabs { display:grid; grid-template-columns:repeat(auto-fit,minmax(74px,1fr)); gap:4px; padding:8px 10px; border-bottom:1px solid rgba(255,255,255,.07); position:sticky; top:0; z-index:2; background:#161618; }
 .zs-menu-tabs button { border:0; border-radius:7px; padding:7px 4px; background:transparent; color:#85858e; font:600 10.5px system-ui; cursor:pointer; }
 .zs-menu-tabs button:hover { background:rgba(255,255,255,.06); color:#ddd; }
 .zs-menu-tabs button.active { background:rgba(124,108,242,.18); color:#e8e4ff; }
@@ -1112,7 +1241,7 @@ html.zs-light .ms-bench-card { border-color:rgba(0,0,0,.09); background:rgba(0,0
 
 /* 5.0 Appearance Studio */
 #zs-root { --ms-ui-scale:1; --ms-radius:9px; }
-#zs-root #zs-menu { width:var(--ms-menu-width); transform-origin:bottom right; font-family:system-ui,sans-serif; border-radius:calc(var(--ms-radius) + 4px); }
+#zs-root #zs-menu { width:min(var(--ms-menu-width), calc(100vw - 16px)); max-width:calc(100vw - 16px); transform-origin:bottom right; font-family:system-ui,sans-serif; border-radius:calc(var(--ms-radius) + 4px); }
 #zs-root[data-ms-font="rounded"] #zs-menu,#zs-root[data-ms-font="rounded"] #zs-bar { font-family:"Trebuchet MS",ui-rounded,system-ui,sans-serif; }
 #zs-root[data-ms-font="mono"] #zs-menu,#zs-root[data-ms-font="mono"] #zs-bar { font-family:"Courier New",ui-monospace,monospace; }
 #zs-root[data-ms-radius] .zs-menu-sec,#zs-root[data-ms-radius] .zs-behavior-opt,#zs-root[data-ms-radius] .zs-pref-opt { border-radius:var(--ms-radius); }
@@ -1130,10 +1259,1006 @@ html.zs-light .ms-bench-card { border-color:rgba(0,0,0,.09); background:rgba(0,0
 .zs-custom-preview-icon { display:grid;place-items:center;width:34px;height:34px;border-radius:11px;background:var(--ms-accent);color:white;font-size:17px;box-shadow:0 7px 22px color-mix(in srgb,var(--ms-accent) 30%,transparent); }
 .zs-custom-preview>div { display:flex;flex-direction:column;min-width:0; }.zs-custom-preview b{color:#f5f5f8;font-size:12px}.zs-custom-preview span:not(.zs-custom-preview-icon){color:#898993;font-size:9.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.zs-custom-preview i{margin-left:auto;width:7px;height:7px;border-radius:50%;background:#43c38b;box-shadow:0 0 8px #43c38b}
 .zs-brand-grid { display:grid;grid-template-columns:48px 1fr;gap:6px}.zs-brand-grid input{min-width:0;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);color:#eee;border-radius:7px;padding:8px;font:10.5px system-ui}.zs-brand-grid input:last-child{grid-column:1/-1}.zs-brand-grid input:first-child{text-align:center;font-size:16px}
-.zs-theme-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.zs-theme-opt{display:flex;align-items:center;gap:6px;border:1px solid rgba(255,255,255,.09);background:rgba(255,255,255,.035);color:#aaa;border-radius:8px;padding:7px;cursor:pointer;font:600 9.5px system-ui}.zs-theme-opt i{width:13px;height:13px;border-radius:4px;background:linear-gradient(135deg,#252631,var(--ms-accent))}.zs-theme-opt.active{border-color:var(--ms-accent);color:#fff;background:color-mix(in srgb,var(--ms-accent) 13%,transparent)}
+.zs-theme-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px}.zs-theme-opt{display:flex;align-items:center;gap:5px;min-width:0;border:1px solid rgba(255,255,255,.09);background:rgba(255,255,255,.035);color:#b9b9c4;border-radius:8px;padding:6px 5px;cursor:pointer;font:600 9.5px system-ui}.zs-theme-opt i{flex:0 0 auto;width:11px;height:11px;border-radius:3px;border:1px solid rgba(255,255,255,.22)}.zs-theme-opt b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:inherit}.zs-theme-opt.active{border-color:var(--ms-accent);color:#fff;background:color-mix(in srgb,var(--ms-accent) 13%,transparent)}
+/* Each chip previews its own palette, so the grid reads as a theme gallery
+   rather than eight identical grey pills. Falls back to the accent gradient. */
+.zs-theme-opt i{background:linear-gradient(135deg,#252631,var(--ms-accent))}
+.zs-theme-opt[data-theme="auto"] i{background:linear-gradient(135deg,#1b1b24,#8f8fa2)}
+.zs-theme-opt[data-theme="midnight"] i{background:linear-gradient(135deg,#0b0b12,#3d3d63)}
+.zs-theme-opt[data-theme="graphite"] i{background:linear-gradient(135deg,#17181b,#6f7278)}
+.zs-theme-opt[data-theme="frost"] i{background:linear-gradient(135deg,#e8f1fb,#9fc4e8)}
+.zs-theme-opt[data-theme="mono"] i{background:linear-gradient(135deg,#0d0d0f,#f4f4f7)}
+.zs-theme-opt[data-theme="ink"] i{background:linear-gradient(135deg,#101014,#4a4a55)}
+.zs-theme-opt[data-theme="synthwave"] i{background:linear-gradient(135deg,#25113b,#f05bd8)}
+.zs-theme-opt[data-theme="forest"] i{background:linear-gradient(135deg,#14271f,#5fae86)}
 .zs-pref-grid-4{grid-template-columns:repeat(4,1fr)}.zs-color-custom{position:relative;width:24px;height:24px;border-radius:50%;overflow:hidden;cursor:pointer;border:1px dashed rgba(255,255,255,.35)}.zs-color-custom input{position:absolute;inset:-8px;width:42px;height:42px;opacity:0;cursor:pointer}.zs-color-custom span{position:absolute;inset:0;display:grid;place-items:center;color:#ddd;font:700 14px system-ui;pointer-events:none}
 .zs-elevenlabs-sec{border-top:1px solid color-mix(in srgb,var(--ms-accent) 30%,transparent)!important}.zs-secret-state{font:700 8.5px system-ui;text-transform:uppercase;letter-spacing:.4px;padding:3px 7px;border-radius:99px}.zs-secret-state.on{color:#87e7bb;background:rgba(42,169,129,.13);border:1px solid rgba(42,169,129,.35)}.zs-secret-state.off{color:#e8aa72;background:rgba(227,139,60,.1);border:1px solid rgba(227,139,60,.3)}.zs-secret-field{display:grid;grid-template-columns:1fr auto;gap:6px;margin-top:10px}.zs-secret-field input{min-width:0;border:1px solid rgba(255,255,255,.11);background:rgba(0,0,0,.18);color:#eee;border-radius:8px;padding:9px;font:10.5px ui-monospace,monospace}.zs-secret-field input:focus{outline:none;border-color:var(--ms-accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--ms-accent) 18%,transparent)}
 html.zs-light .zs-brand-grid input,html.zs-light .zs-secret-field input{background:white;color:#222;border-color:rgba(0,0,0,.13)}html.zs-light .zs-custom-preview b{color:#20222b}
 
 /* Always-visible Notion recovery surface when the AI composer has not mounted. */
 #zs-bar.zs-bar-detached { position:fixed; z-index:2147483601; margin:0; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   MONOCHROME DESIGN SYSTEM  (6.17.6)
+   ══════════════════════════════════════════════════════════════════════════
+
+   A single, self-contained visual layer that re-skins the whole control centre
+   in black / white / grey, using gradients and light rather than colour to
+   carry hierarchy and state.
+
+   ── Why a final layer, not a rewrite ────────────────────────────────────
+
+   Every selector here is either NEW (.zs-mono-*, .zs-enhance-*, .zs-media-*,
+   .zs-drop, .zs-slider-*) or a re-skin of an EXISTING one. The 1,100 lines
+   above are never edited, so every feature, id and class a user or a test
+   depends on keeps working - including the Appearance Studio's accent, theme,
+   density, width, scale, font, radius, backdrop and motion controls, which all
+   still apply because this layer reads the SAME --ms-* variables.
+
+   ── The token idea ──────────────────────────────────────────────────────
+
+   Colour is removed from the STRUCTURE and kept only where it MEANS something
+   (an online dot, a warning). Everything else is expressed as:
+     - a surface ramp        --mono-0 (deepest) .. --mono-5 (highest)
+     - a hairline            rgba on the current ink, not a fixed grey
+     - a sheen               a top-lit linear-gradient, so a card reads raised
+     - a glow                a soft radial the accent (now near-white) bleeds
+   A surface earns its brightness from how far it is from the page, so the eye
+   reads depth without a single hue.
+
+   ── Ambient light ───────────────────────────────────────────────────────
+
+   A very low-opacity radial sits behind the panel, its origin following the
+   pointer via a CSS custom property the panel updates on mousemove. It is
+   decorative only, costs one composited layer, and is disabled entirely under
+   the existing reduced/none motion preferences - so a user who already turned
+   motion off feels no difference.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+#zs-root {
+  /* A de-saturated default for the legacy --ms-accent path, so a fresh install
+     is monochrome without a colour ever appearing. A user who picks a real
+     accent still overrides this (it is set inline by applyMenuPrefs). */
+  --ms-accent: var(--mono-accent);
+  /* Surface ramp. Deepest -> highest. */
+  --mono-0: #06060a;
+  --mono-1: #0b0b0f;
+  --mono-2: #121217;
+  --mono-3: #1a1a21;
+  --mono-4: #23232c;
+  --mono-5: #2e2e39;
+  /* Ink ramp. Highest contrast -> quietest. */
+  --mono-ink: #f4f4f7;
+  --mono-ink-2: #c9c9d2;
+  --mono-ink-3: #9494a2;
+  --mono-ink-4: #6a6a78;
+  /* Hairlines and sheens, derived so a light theme inverts cleanly. */
+  --mono-line: rgba(255, 255, 255, 0.085);
+  --mono-line-strong: rgba(255, 255, 255, 0.16);
+  --mono-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0));
+  --mono-raised: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.012));
+  /* The accent is de-saturated to near-white: hierarchy comes from light. */
+  --mono-accent: #f2f2f6;
+  /* Pointer-tracked ambient origin. */
+  --mono-mx: 50%;
+  --mono-my: 0%;
+
+  /* ── Multi-Script semantic aliases ──────────────────────────────────────
+     The terminal panel (and anything else written against the shorter names)
+     styles itself with --ms-surface / --ms-ink / --ms-ink-3. Those were
+     REFERENCED but never DEFINED, so every rule silently fell back to its
+     hardcoded hex: the panel stayed dark in light mode and ignored a theme
+     change entirely - the opposite of the intended behaviour.
+
+     Aliasing them onto the --mono-* ramp fixes that at the source, because
+     light mode and every named theme already redefine --mono-*. One alias
+     block makes the whole panel theme-aware with no JS and no per-theme CSS. */
+  --ms-surface: var(--mono-2);
+  --ms-surface-2: var(--mono-3);
+  --ms-ink: var(--mono-ink);
+  --ms-ink-2: var(--mono-ink-2);
+  --ms-ink-3: var(--mono-ink-3);
+  --ms-line: var(--mono-line);
+}
+
+/* ── The panel shell ───────────────────────────────────────────────────── */
+/* The menu is a POPOVER: it must anchor to the viewport (position:fixed) and
+   never to #zs-root's flow. #zs-root is a fixed element pinned at (0,0), so a
+   position:relative menu inside it resolves `right:` against the SCREEN edge -
+   but placeBar() feeds it a bar-relative offset (window.innerWidth - br.right),
+   which is the page gutter, not a screen inset. The menu was therefore shoved
+   left by the gutter width on every wide composer and its left half slid off
+   the screen. Fixed positioning makes `right:` mean what placeBar() already
+   computes (distance from the viewport's right edge). */
+#zs-menu {
+  position: fixed;
+  box-sizing: border-box;
+  /* Never wider than the viewport, and never wider than the configured width.
+     Left/right insets are clamped in placeBar() so it can't leave the screen. */
+  max-width: calc(100vw - 16px);
+  isolation: isolate;
+  background:
+    radial-gradient(120% 90% at var(--mono-mx) var(--mono-my), rgba(255, 255, 255, 0.07), transparent 58%),
+    linear-gradient(180deg, var(--mono-1), var(--mono-0) 78%);
+  border: 1px solid var(--mono-line);
+  box-shadow:
+    0 24px 70px rgba(0, 0, 0, 0.62),
+    0 2px 0 rgba(255, 255, 255, 0.045) inset,
+    0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+/* A one-pixel top highlight is what makes an edge read as a lit bevel. */
+#zs-menu::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3) 22%, rgba(255, 255, 255, 0.3) 78%, transparent);
+  pointer-events: none;
+}
+
+/* ── Header + tab rail ─────────────────────────────────────────────────── */
+.zs-menu-head {
+  padding: 13px 15px 11px;
+  border-bottom: 1px solid var(--mono-line);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent);
+}
+.zs-menu-logo { color: var(--mono-ink); letter-spacing: -0.2px; font-size: 13.5px; }
+.zs-menu-tag { color: var(--mono-ink-4); }
+.zs-menu-health {
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid var(--mono-line);
+  color: var(--mono-ink-3);
+  border-radius: 999px;
+  padding: 3px 9px;
+}
+.zs-menu-health.on { color: #7ef0b8; background: rgba(52, 211, 153, 0.1); border-color: rgba(52, 211, 153, 0.3); }
+.zs-menu-health.off { color: #f79c9c; background: rgba(248, 113, 113, 0.09); border-color: rgba(248, 113, 113, 0.26); }
+
+.zs-menu-tabs {
+  padding: 9px 11px 10px;
+  gap: 5px;
+  background: linear-gradient(180deg, var(--mono-2), var(--mono-1));
+  border-bottom: 1px solid var(--mono-line);
+}
+.zs-menu-tabs button {
+  position: relative;
+  border-radius: 8px;
+  padding: 8px 4px;
+  color: var(--mono-ink-4);
+  font: 600 10.5px/1 system-ui;
+  letter-spacing: 0.2px;
+  transition: color 0.16s ease, background 0.16s ease;
+}
+.zs-menu-tabs button:hover { background: rgba(255, 255, 255, 0.055); color: var(--mono-ink-2); }
+.zs-menu-tabs button.active {
+  background: var(--mono-sheen), var(--mono-raised) !important;
+  border: 1px solid var(--mono-line-strong) !important;
+  color: var(--mono-ink) !important;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.07) inset, 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+/* A short underline marks the active tab without a colour block. */
+.zs-menu-tabs button.active::after {
+  content: "";
+  position: absolute;
+  left: 26%; right: 26%; bottom: 3px;
+  height: 1.5px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--mono-ink), transparent);
+}
+
+/* ── Section cards ─────────────────────────────────────────────────────── */
+.zs-menu-sec { padding: 13px 15px; border-top: 1px solid var(--mono-line); }
+.zs-menu-sec:first-of-type { border-top: 0; }
+/* Every other section sits a half-step up the ramp, so a long panel reads as a
+   stack of cards instead of one flat column. */
+.zs-menu-sec:nth-of-type(even) { background: linear-gradient(180deg, var(--mono-2), var(--mono-1)); }
+.zs-sec-label { color: var(--mono-ink-2); letter-spacing: 0.3px; }
+.zs-menu-note { color: var(--mono-ink-4); }
+.zs-menu-note b { color: var(--mono-ink-2); }
+
+/* ── Status overview ──────────────────────────────────────────────────── */
+.zs-overview > div {
+  border: 1px solid var(--mono-line);
+  border-radius: 10px;
+  background: var(--mono-raised);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+}
+.zs-overview-k { color: var(--mono-ink-4); }
+.zs-overview b { color: var(--mono-ink); }
+
+/* ── Buttons: one family, four ranks ───────────────────────────────────── */
+.zs-mini-action {
+  border: 1px solid var(--mono-line);
+  border-radius: 9px;
+  background: var(--mono-raised);
+  color: var(--mono-ink-2);
+  padding: 8px 11px;
+  font: 650 10.5px system-ui;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+}
+.zs-mini-action:hover:not(:disabled) {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.045));
+  border-color: var(--mono-line-strong);
+  color: var(--mono-ink);
+}
+.zs-mini-action:active:not(:disabled) { transform: translateY(1px); }
+.zs-mini-action:disabled { opacity: 0.38; cursor: not-allowed; }
+
+/* ── Choice / option controls ─────────────────────────────────────────── */
+.zs-pref-opt,
+.zs-behavior-opt,
+.zs-economy-opt,
+.zs-quality-opt,
+.zs-profile-opt {
+  border: 1px solid var(--mono-line);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.028);
+  color: var(--mono-ink-3);
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+/* Theme swatches carry their own chip + label, so they need their own
+   legible ink ramp. Re-asserted here (after the grouped block) because the
+   early .zs-theme-opt rule is out-specified by this section. */
+.zs-theme-opt {
+  border: 1px solid var(--mono-line);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.028);
+  color: var(--mono-ink-2);
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.zs-pref-opt:hover,
+.zs-behavior-opt:hover,
+.zs-economy-opt:hover,
+.zs-quality-opt:hover,
+.zs-theme-opt:hover { background: rgba(255, 255, 255, 0.075); color: var(--mono-ink); }
+.zs-pref-opt.active,
+.zs-behavior-opt.active,
+.zs-economy-opt.active,
+.zs-quality-opt.active,
+.zs-theme-opt.active,
+.zs-profile-opt.active {
+  border-color: var(--mono-line-strong) !important;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.05)) !important;
+  color: var(--mono-ink) !important;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.1) inset, 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+.zs-behavior-opt.active b { color: var(--mono-ink); }
+.zs-pref-row { color: var(--mono-ink-3); }
+.zs-pref-row select,
+.zs-brand-grid input,
+.zs-secret-field input,
+.zs-mcp-field input,
+.zs-mcp-field select,
+#zs-set-text {
+  border: 1px solid var(--mono-line);
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--mono-ink-2);
+}
+.zs-pref-row select:focus,
+.zs-brand-grid input:focus,
+.zs-secret-field input:focus,
+.zs-mcp-field input:focus,
+#zs-set-text:focus {
+  outline: none;
+  border-color: var(--mono-line-strong);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.07);
+}
+
+/* ── Slider (enhancer strength) ───────────────────────────────────────── */
+.zs-slider-row { display: flex; align-items: center; gap: 10px; margin: 11px 0 7px; }
+.zs-slider-label { flex: none; color: var(--mono-ink-4); font: 650 10px system-ui; text-transform: uppercase; letter-spacing: 0.5px; }
+.zs-slider-row input[type="range"] {
+  -webkit-appearance: none; appearance: none; flex: 1; height: 3px; border-radius: 999px;
+  background: linear-gradient(90deg, var(--mono-5), var(--mono-4) 45%, var(--mono-3), var(--mono-ink));
+  outline: none; cursor: pointer;
+}
+.zs-slider-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: linear-gradient(180deg, #ffffff, #b9b9c4);
+  border: 1px solid rgba(0, 0, 0, 0.45);
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.6), 0 0 0 3px rgba(255, 255, 255, 0.08);
+}
+.zs-slider-row b { flex: none; min-width: 54px; text-align: right; color: var(--mono-ink); font: 700 11px system-ui; }
+
+/* ── Enhancer live preview ────────────────────────────────────────────── */
+.zs-enhance-preview {
+  margin-top: 8px; padding: 10px; border-radius: 11px;
+  border: 1px solid var(--mono-line);
+  background: linear-gradient(180deg, var(--mono-2), var(--mono-1));
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+}
+.zs-enhance-preview.zs-enhance-off { opacity: 0.62; }
+.zs-enhance-orig span,
+.zs-enhance-out span { display: block; margin-bottom: 4px; color: var(--mono-ink-4); font: 650 9px system-ui; text-transform: uppercase; letter-spacing: 0.55px; }
+.zs-enhance-orig p { margin: 0; color: var(--mono-ink-2); font: 11px/1.45 system-ui; }
+.zs-enhance-arrow { margin: 7px 0; color: var(--mono-ink-4); font-size: 11px; text-align: center; }
+.zs-enhance-out pre {
+  margin: 0; max-height: 190px; overflow: auto;
+  color: var(--mono-ink-3); font: 10px/1.5 ui-monospace, "Courier New", monospace;
+  white-space: pre-wrap; word-break: break-word;
+}
+.zs-enhance-out pre::-webkit-scrollbar { width: 7px; }
+.zs-enhance-out pre::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.16); border-radius: 999px; }
+
+/* ── Media relay ──────────────────────────────────────────────────────── */
+.zs-drop {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  margin: 10px 0; padding: 20px 12px;
+  border: 1.5px dashed var(--mono-line-strong);
+  border-radius: 13px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.008));
+  cursor: pointer; text-align: center;
+  transition: border-color 0.18s ease, background 0.18s ease, transform 0.14s ease;
+}
+.zs-drop:hover { border-color: rgba(255, 255, 255, 0.32); background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02)); }
+.zs-drop.hot { border-color: var(--mono-ink); background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.03)); transform: scale(1.012); }
+.zs-drop b { color: var(--mono-ink); font: 700 11.5px system-ui; }
+.zs-drop span { color: var(--mono-ink-4); font: 9.5px/1.45 system-ui; }
+.zs-drop u { color: var(--mono-ink-3); text-decoration-color: var(--mono-ink-4); }
+
+.zs-media-status {
+  margin: 3px 0 9px; padding: 8px 10px; border-radius: 9px;
+  border: 1px solid var(--mono-line);
+  background: rgba(255, 255, 255, 0.026);
+  color: var(--mono-ink-3); font: 10.5px/1.42 system-ui;
+}
+.zs-media-status.ok { border-color: rgba(52, 211, 153, 0.32); background: rgba(52, 211, 153, 0.07); color: #9df0c8; }
+.zs-media-status.warn { border-color: rgba(251, 191, 36, 0.32); background: rgba(251, 191, 36, 0.07); color: #f4d28a; }
+
+/* Body drop target: the relay accepts a file anywhere over the composer. */
+#zs-root.zs-media-hot .zs-drop { border-color: var(--mono-ink); }
+
+/* ── Surface vision panel ─────────────────────────────────────────────── */
+.zs-surface-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin: 4px 0 8px;
+}
+.zs-surface-stat {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 11px 8px; border-radius: 11px;
+  border: 1px solid var(--mono-line);
+  background:
+    radial-gradient(120% 120% at var(--mono-mx, 50%) var(--mono-my, 0%), rgba(255, 255, 255, 0.07), transparent 62%),
+    linear-gradient(180deg, var(--mono-2), var(--mono-1));
+}
+.zs-surface-stat b {
+  font: 700 19px/1 system-ui; letter-spacing: -0.02em;
+  background: linear-gradient(180deg, #ffffff, #b9b9c6);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.zs-surface-stat span {
+  font: 9.5px/1 system-ui; text-transform: uppercase; letter-spacing: 0.09em;
+  color: var(--mono-ink-4);
+}
+.zs-surface-sec #ms-surface-status { white-space: pre-wrap; word-break: break-word; }
+/* Light theme: the black gradient text would vanish on a light surface. */
+html.zs-light .zs-surface-stat b,
+#zs-root[data-ms-theme="frost"] .zs-surface-stat b {
+  background: linear-gradient(180deg, #2a2a33, #0b0b10);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+
+/* ── Benchmark cards ──────────────────────────────────────────────────── */
+.ms-bench-card { border: 1px solid var(--mono-line); border-radius: 11px; background: var(--mono-raised); }
+.ms-bench-card.active { border-color: var(--mono-line-strong); background: linear-gradient(180deg, rgba(255, 255, 255, 0.085), rgba(255, 255, 255, 0.02)); }
+.ms-bench-track { background: rgba(255, 255, 255, 0.075); }
+/* The bar is a light ramp, not a colour pair - length is the signal. */
+.ms-bench-track i { background: linear-gradient(90deg, var(--mono-ink-4), var(--mono-ink)); }
+
+/* ── Custom preview card ──────────────────────────────────────────────── */
+.zs-custom-preview {
+  border: 1px solid var(--mono-line-strong);
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.015));
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.07) inset;
+}
+.zs-custom-preview-icon {
+  background: linear-gradient(180deg, #ffffff, #a9a9b6);
+  color: #0a0a0e;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.55), 0 1px 0 rgba(255, 255, 255, 0.5) inset;
+}
+.zs-custom-preview b { color: var(--mono-ink); }
+.zs-custom-preview span:not(.zs-custom-preview-icon) { color: var(--mono-ink-4); }
+.zs-custom-preview i { background: #43c38b; box-shadow: 0 0 9px #43c38b; }
+
+/* ── Next-step hint ───────────────────────────────────────────────────── */
+.zs-next-step {
+  border: 1px solid var(--mono-line);
+  border-left: 2px solid var(--mono-ink-3);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.012));
+}
+.zs-next-step b { color: var(--mono-ink-2); }
+
+/* ── Support / tip rows ───────────────────────────────────────────────── */
+.zs-tip-opt { border: 1px solid var(--mono-line); border-radius: 10px; background: var(--mono-raised); transition: background 0.15s ease, border-color 0.15s ease; }
+.zs-tip-opt:hover { background: linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.03)); border-color: var(--mono-line-strong); }
+
+/* ── The status bar above the composer ────────────────────────────────── */
+#zs-bar {
+  background: linear-gradient(180deg, rgba(20, 20, 26, 0.97), rgba(9, 9, 13, 0.97));
+  border: 1px solid var(--mono-line);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(255, 255, 255, 0.06) inset;
+}
+#zs-brand { color: var(--mono-ink); }
+#zs-state b { color: var(--mono-ink); }
+#zs-state.zs-state-warn { color: #f6a9a9; }
+#zs-state.zs-state-warn b { color: #ffc9c9; }
+#zs-bar.tone-active #zs-state b { color: #9df0c8; }
+
+#zs-action[data-kind="start"] {
+  background: linear-gradient(180deg, #ffffff, #c2c2ce);
+  color: #08080c;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(255, 255, 255, 0.75) inset;
+}
+#zs-action[data-kind="start"]:hover { filter: brightness(1.06); }
+#zs-action[data-kind="start-degraded"] {
+  background: linear-gradient(180deg, #f5cf7a, #c9973a);
+  color: #2a1c04;
+  border-color: rgba(255, 255, 255, 0.4);
+}
+#zs-stop { background: linear-gradient(180deg, #f3796f, #c8392f); border: 1px solid rgba(255, 255, 255, 0.3); }
+#zs-chat-only {
+  border: 1px solid var(--mono-line-strong);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--mono-ink-2);
+}
+#zs-chat-only:hover { background: rgba(255, 255, 255, 0.12); }
+#zs-discord, #zs-support, #zs-bridge, #zs-switch {
+  border: 1px solid var(--mono-line);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--mono-ink-3);
+}
+#zs-discord:hover, #zs-support:hover, #zs-bridge:hover, #zs-switch:hover { background: rgba(255, 255, 255, 0.12); color: var(--mono-ink); }
+.zs-live-dot { background: var(--mono-ink-4); }
+.zs-live-dot:not(.idle) { background: #43c38b; box-shadow: 0 0 7px #43c38b; }
+#zs-dot.on { background: #43c38b; box-shadow: 0 0 7px #43c38b; }
+#zs-dot.warn { background: #fbbf24; box-shadow: 0 0 7px #fbbf24; }
+
+/* ── Two monochrome themes ────────────────────────────────────────────── */
+/* Mono: a soft, cool-black panel. */
+#zs-root[data-ms-theme="mono"] #zs-menu {
+  background:
+    radial-gradient(120% 90% at var(--mono-mx) var(--mono-my), rgba(255, 255, 255, 0.075), transparent 58%),
+    linear-gradient(180deg, #101015, #07070a 78%) !important;
+}
+/* Ink: pure black, maximum contrast, no ambient bleed. */
+#zs-root[data-ms-theme="ink"] #zs-menu {
+  background: linear-gradient(180deg, #0a0a0d, #000 82%) !important;
+  border-color: rgba(255, 255, 255, 0.13);
+}
+#zs-root[data-ms-theme="ink"] #zs-menu::before { opacity: 0.7; }
+
+/* ── Light theme: the SAME ramp, inverted ─────────────────────────────── */
+/* Every token flips, so nothing here needs a per-component light override. */
+html.zs-light #zs-root,
+#zs-root[data-ms-theme="frost"] {
+  --mono-0: #ffffff;
+  --mono-1: #fbfbfc;
+  --mono-2: #f4f4f6;
+  --mono-3: #ececef;
+  --mono-4: #e2e2e7;
+  --mono-5: #d4d4db;
+  --mono-ink: #0c0c11;
+  --mono-ink-2: #33333d;
+  --mono-ink-3: #5f5f6d;
+  --mono-ink-4: #8a8a97;
+  --mono-line: rgba(0, 0, 0, 0.09);
+  --mono-line-strong: rgba(0, 0, 0, 0.18);
+  --mono-raised: linear-gradient(180deg, rgba(0, 0, 0, 0.026), rgba(0, 0, 0, 0.006));
+}
+html.zs-light #zs-menu,
+#zs-root[data-ms-theme="frost"] #zs-menu {
+  background:
+    radial-gradient(120% 90% at var(--mono-mx) var(--mono-my), rgba(0, 0, 0, 0.03), transparent 58%),
+    linear-gradient(180deg, #ffffff, #f6f6f8 80%) !important;
+  box-shadow: 0 22px 60px rgba(20, 20, 40, 0.18), 0 1px 0 rgba(255, 255, 255, 0.9) inset;
+}
+html.zs-light #zs-menu::before,
+#zs-root[data-ms-theme="frost"] #zs-menu::before { background: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.14) 24%, rgba(0, 0, 0, 0.14) 76%, transparent); }
+html.zs-light .zs-menu-tabs,
+#zs-root[data-ms-theme="frost"] .zs-menu-tabs { background: linear-gradient(180deg, #f7f7f9, #f1f1f4); }
+html.zs-light .zs-menu-tabs button.active,
+#zs-root[data-ms-theme="frost"] .zs-menu-tabs button.active {
+  background: linear-gradient(180deg, #ffffff, #f2f2f5) !important;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 3px 10px rgba(20, 20, 40, 0.1) !important;
+}
+html.zs-light .zs-custom-preview-icon,
+#zs-root[data-ms-theme="frost"] .zs-custom-preview-icon {
+  background: linear-gradient(180deg, #2a2a33, #0b0b10);
+  color: #fff;
+}
+html.zs-light #zs-bar { background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(244, 244, 247, 0.98)); }
+html.zs-light #zs-action[data-kind="start"] { background: linear-gradient(180deg, #2c2c36, #0a0a10); color: #fff; border-color: rgba(0, 0, 0, 0.4); }
+html.zs-light .zs-enhance-out pre { color: var(--mono-ink-2); }
+
+/* ── Motion: honour the user's existing preference ────────────────────── */
+#zs-root[data-ms-motion="reduced"] #zs-menu,
+#zs-root[data-ms-motion="reduced"] .zs-drop,
+#zs-root[data-ms-motion="reduced"] .zs-mini-action { transition-duration: 0.08s !important; }
+#zs-root[data-ms-motion="none"] #zs-menu::before { display: none; }
+#zs-root[data-ms-motion="none"] #zs-menu { background: linear-gradient(180deg, var(--mono-1), var(--mono-0) 80%) !important; }
+
+/* ── Editable prompt-enhancer review ─────────────────────────────────── */
+.zs-enhance-review {
+  position: fixed; inset: 0; z-index: 2147483647;
+  display: grid; place-items: center; padding: 22px;
+  background: rgba(7, 10, 18, .62); backdrop-filter: blur(8px);
+  animation: zs-review-in .16s ease-out;
+}
+.zs-enhance-dialog {
+  width: min(720px, calc(100vw - 32px)); max-height: min(760px, calc(100vh - 32px));
+  display: flex; flex-direction: column; gap: 12px; padding: 18px; overflow: hidden;
+  color: var(--mono-ink, #f7f8fb); background: var(--mono-1, #171b25);
+  border: 1px solid var(--mono-line, rgba(255,255,255,.14)); border-radius: 18px;
+  box-shadow: 0 28px 80px rgba(0,0,0,.42);
+}
+.zs-enhance-dialog-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
+.zs-enhance-dialog-head > div { display:flex; flex-direction:column; gap:3px; }
+.zs-enhance-dialog-head b { font-size:16px; }
+.zs-enhance-dialog-head span, .zs-enhance-dialog-meta { color:var(--mono-ink-3, #aab1c2); font-size:12px; line-height:1.45; }
+.zs-enhance-dialog-head > button {
+  width:30px; height:30px; border:0; border-radius:9px; cursor:pointer;
+  color:inherit; background:rgba(127,127,127,.12); font-size:20px;
+}
+.zs-enhance-dialog label { font-size:12px; font-weight:700; }
+.zs-enhance-dialog textarea {
+  width:100%; min-height:280px; max-height:52vh; resize:vertical; box-sizing:border-box;
+  padding:13px; border-radius:12px; border:1px solid var(--mono-line, rgba(255,255,255,.14));
+  color:inherit; background:rgba(127,127,127,.08);
+  font:12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; outline:none;
+}
+.zs-enhance-dialog textarea:focus { border-color:var(--mono-accent, #7c8cff); box-shadow:0 0 0 3px rgba(124,140,255,.18); }
+.zs-enhance-dialog-actions { display:flex; justify-content:flex-end; gap:9px; }
+.zs-enhance-dialog-actions button {
+  padding:9px 13px; border-radius:10px; border:1px solid var(--mono-line, rgba(255,255,255,.14));
+  color:inherit; background:rgba(127,127,127,.09); cursor:pointer;
+}
+.zs-enhance-dialog-actions .primary { border-color:transparent; color:white; background:var(--mono-accent, #6675f6); font-weight:700; }
+@keyframes zs-review-in { from { opacity:0 } to { opacity:1 } }
+@media (prefers-reduced-motion: reduce) { .zs-enhance-review { animation:none; } }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   BRIDGE TERMINAL PANEL  (the chat bar's terminal icon)
+   ══════════════════════════════════════════════════════════════════════════
+   A top-down panel that opens under the bar and shows the bridge's live log,
+   its attached engines and its health.
+
+   THEMING CONTRACT
+   Every colour here is either a semantic token from #zs-root or a
+   color-mix() of --ms-accent. Nothing is a fixed hex, so the panel follows the
+   user's accent / light-dark / backdrop with no JS involvement - which is the
+   whole reason the icon is allowed to claim it "changes alongside the chatbar".
+
+   The log itself is the one place that needs fixed hues: warn/error must read
+   as warn/error regardless of the user's accent, so those three are literal.
+   ──────────────────────────────────────────────────────────────────────── */
+
+#zs-term {
+  /* Docked by terminal.js (_place): it sets left/top|bottom/width/maxHeight inline
+     from the bridge icon's rect and flips upward when there is no room below. */
+  position: fixed;
+  left: 12px;
+  top: 12px;
+  width: min(560px, calc(100vw - 24px));
+  max-height: min(460px, 62vh);
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  border-radius: 14px;
+  overflow: hidden;
+  z-index: 2147483601;
+
+  background: color-mix(in srgb, var(--ms-surface, #14141c) 96%, transparent);
+  color: var(--ms-ink, #e8e8ec);
+  border: 1px solid color-mix(in srgb, var(--ms-accent, #7c6cf2) 30%, transparent);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(14px) saturate(1.2);
+
+  font: 11.5px/1.45 ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  animation: zs-term-in 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+}
+#zs-term[hidden] { display: none; }
+
+@keyframes zs-term-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes zs-term-in-up {
+  from { opacity: 0; transform: translateY(6px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+#zs-term[data-dir="up"] { animation-name: zs-term-in-up; transform-origin: bottom right; }
+#zs-term[data-dir="down"] { transform-origin: top right; }
+
+/* ── header ─────────────────────────────────────────────────────────────── */
+.zs-term-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px 8px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ms-accent, #7c6cf2) 16%, transparent);
+  background: color-mix(in srgb, var(--ms-accent, #7c6cf2) 7%, transparent);
+  flex: 0 0 auto;
+  font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+.zs-term-title { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.zs-term-name { font-weight: 700; font-size: 11.5px; letter-spacing: 0.2px; }
+
+.zs-term-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto;
+  background: #f87171;
+  transition: background 0.25s ease, box-shadow 0.25s ease;
+}
+.zs-term-dot[data-state="live"]    { background: #34d399; box-shadow: 0 0 7px rgba(52, 211, 153, 0.85); }
+.zs-term-dot[data-state="partial"] { background: #fbbf24; box-shadow: 0 0 7px rgba(251, 191, 36, 0.8); animation: zs-bridge-pulse 1.4s ease-in-out infinite; }
+
+.zs-term-pill {
+  font-size: 8.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+  padding: 2px 6px; border-radius: 99px;
+  border: 1px solid currentColor;
+  opacity: 0.9;
+}
+.zs-term-pill[data-state="live"]    { color: #34d399; }
+.zs-term-pill[data-state="partial"] { color: #fbbf24; }
+.zs-term-pill[data-state="down"]    { color: #f87171; }
+
+.zs-term-state { color: var(--ms-ink-3, #9494a2); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.zs-term-meta {
+  margin-left: auto; color: var(--ms-ink-3, #9494a2); font-size: 9.5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46%;
+}
+
+.zs-term-x {
+  flex: 0 0 auto; display: grid; place-items: center;
+  width: 22px; height: 22px; padding: 0;
+  border: 1px solid transparent; border-radius: 6px;
+  background: transparent; color: var(--ms-ink-3, #9494a2); cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.zs-term-x:hover { background: rgba(255, 255, 255, 0.1); color: var(--ms-ink, #e8e8ec); }
+
+/* ── filter / tool bar ──────────────────────────────────────────────────── */
+.zs-term-bar {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ms-accent, #7c6cf2) 12%, transparent);
+  flex: 0 0 auto;
+  font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+.zs-term-filters { display: flex; gap: 3px; min-width: 0; overflow: hidden; }
+.zs-term-filter {
+  border: 1px solid transparent; border-radius: 6px;
+  background: transparent; color: var(--ms-ink-3, #9494a2);
+  padding: 3px 7px; font: 600 9.5px ui-sans-serif, system-ui; cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.zs-term-filter:hover { background: rgba(255, 255, 255, 0.07); color: var(--ms-ink, #e8e8ec); }
+.zs-term-filter.is-on {
+  background: color-mix(in srgb, var(--ms-accent, #7c6cf2) 22%, transparent);
+  border-color: color-mix(in srgb, var(--ms-accent, #7c6cf2) 45%, transparent);
+  color: #fff;
+}
+.zs-term-tools { display: flex; gap: 4px; margin-left: auto; flex: 0 0 auto; }
+.zs-term-tool {
+  border: 1px solid color-mix(in srgb, var(--ms-accent, #7c6cf2) 22%, transparent);
+  border-radius: 6px; background: transparent; color: var(--ms-ink-3, #9494a2);
+  padding: 3px 7px; font: 600 9.5px ui-sans-serif, system-ui; cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+}
+.zs-term-tool:hover { background: rgba(255, 255, 255, 0.08); color: var(--ms-ink, #e8e8ec); }
+.zs-term-tool[data-on="1"] {
+  border-color: color-mix(in srgb, var(--ms-accent, #7c6cf2) 55%, transparent);
+  color: var(--ms-accent, #7c6cf2);
+}
+
+/* ── the log ────────────────────────────────────────────────────────────── */
+.zs-term-body {
+  flex: 1 1 auto;
+  min-height: 120px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px 4px 10px 10px;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--ms-accent, #7c6cf2) 45%, transparent) transparent;
+  overscroll-behavior: contain;
+}
+.zs-term-body::-webkit-scrollbar { width: 9px; }
+.zs-term-body::-webkit-scrollbar-track { background: transparent; }
+.zs-term-body::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--ms-accent, #7c6cf2) 42%, transparent);
+  border-radius: 99px; border: 2px solid transparent; background-clip: padding-box;
+}
+.zs-term-body::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--ms-accent, #7c6cf2) 66%, transparent); background-clip: padding-box; }
+
+.zs-term-line {
+  display: flex; gap: 8px; align-items: baseline;
+  padding: 1px 5px 1px 0; border-radius: 4px;
+  white-space: pre-wrap; word-break: break-word;
+  animation: zs-term-line-in 0.12s ease-out;
+}
+@keyframes zs-term-line-in { from { opacity: 0; transform: translateX(-3px); } to { opacity: 1; transform: none; } }
+
+.zs-term-t {
+  flex: 0 0 auto; color: var(--ms-ink-3, #9494a2); font-size: 10px;
+  font-variant-numeric: tabular-nums; opacity: 0.85;
+}
+.zs-term-m { flex: 1 1 auto; min-width: 0; }
+
+/* Level colours are deliberately NOT accent-derived: "error" must look like an
+   error under every accent a user can pick. */
+.zs-term-line[data-level="muted"] .zs-term-m { color: var(--ms-ink-3, #9494a2); }
+.zs-term-line[data-level="info"]  .zs-term-m { color: var(--ms-ink, #d6d6de); }
+.zs-term-line[data-level="ok"]    .zs-term-m { color: #5fe0ad; }
+.zs-term-line[data-level="warn"]  .zs-term-m { color: #fbbf24; }
+.zs-term-line[data-level="error"] .zs-term-m { color: #ff8b8b; }
+.zs-term-line[data-level="error"] { background: rgba(248, 113, 113, 0.07); }
+/* Our own explanations, visually distinct from real bridge output. */
+.zs-term-line[data-level="note"] {
+  margin: 6px 0; padding: 8px 10px; border-radius: 8px;
+  background: color-mix(in srgb, var(--ms-accent, #7c6cf2) 9%, transparent);
+  border-left: 3px solid var(--ms-accent, #7c6cf2);
+}
+.zs-term-line[data-level="note"] .zs-term-m { color: var(--ms-ink, #cfcfda); line-height: 1.55; }
+.zs-term-line[data-level="note"] .zs-term-t { display: none; }
+
+.zs-term-empty {
+  padding: 22px 12px; text-align: center;
+  color: var(--ms-ink-3, #9494a2); font-size: 10.5px; font-style: italic;
+}
+
+/* ── footer: engines + actions ──────────────────────────────────────────── */
+.zs-term-foot {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px;
+  border-top: 1px solid color-mix(in srgb, var(--ms-accent, #7c6cf2) 12%, transparent);
+  background: color-mix(in srgb, var(--ms-accent, #7c6cf2) 4%, transparent);
+  flex: 0 0 auto;
+  font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+.zs-term-services { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; overflow: hidden; }
+.zs-term-svc {
+  display: inline-flex; align-items: center; gap: 4px;
+  font: 600 9px ui-sans-serif, system-ui; padding: 2px 6px; border-radius: 99px;
+  border: 1px solid color-mix(in srgb, var(--ms-accent, #7c6cf2) 22%, transparent);
+  color: var(--ms-ink-3, #9494a2);
+}
+.zs-term-svc i { width: 5px; height: 5px; border-radius: 50%; background: #f87171; flex: 0 0 auto; }
+.zs-term-svc.is-up { color: var(--ms-ink, #dcdce4); border-color: rgba(52, 211, 153, 0.4); }
+.zs-term-svc.is-up i { background: #34d399; box-shadow: 0 0 5px rgba(52, 211, 153, 0.8); }
+.zs-term-svc b { font-weight: 700; opacity: 0.75; font-variant-numeric: tabular-nums; }
+.zs-term-svc-none { font-style: italic; border-color: transparent; }
+
+.zs-term-acts { display: flex; gap: 5px; margin-left: auto; flex: 0 0 auto; }
+.zs-term-btn {
+  border: 1px solid color-mix(in srgb, var(--ms-accent, #7c6cf2) 30%, transparent);
+  border-radius: 7px; background: transparent; color: var(--ms-ink, #dcdce4);
+  padding: 5px 9px; font: 600 9.5px ui-sans-serif, system-ui; cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.14s ease, border-color 0.14s ease, transform 0.1s ease;
+}
+.zs-term-btn:hover { background: rgba(255, 255, 255, 0.09); }
+.zs-term-btn:active { transform: translateY(1px); }
+.zs-term-btn[hidden] { display: none; }
+.zs-term-btn-primary {
+  background: var(--ms-accent, #7c6cf2); border-color: transparent; color: #0b0b10; font-weight: 700;
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--ms-accent, #7c6cf2) 40%, transparent);
+}
+.zs-term-btn-primary:hover { filter: brightness(1.1); }
+
+/* ── light mode ─────────────────────────────────────────────────────────── */
+html.zs-light .zs-term {
+  background: color-mix(in srgb, #ffffff 97%, transparent);
+  color: #1d232e;
+  box-shadow: 0 18px 48px rgba(30, 30, 60, 0.2), 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+html.zs-light .zs-term-x:hover { background: rgba(0, 0, 0, 0.07); color: #1d232e; }
+html.zs-light .zs-term-filter:hover,
+html.zs-light .zs-term-tool:hover { background: rgba(0, 0, 0, 0.06); color: #1d232e; }
+html.zs-light .zs-term-filter.is-on { color: #fff; }
+html.zs-light .zs-term-line[data-level="info"] .zs-term-m { color: #232a35; }
+html.zs-light .zs-term-line[data-level="muted"] .zs-term-m { color: #6b7280; }
+html.zs-light .zs-term-line[data-level="ok"] .zs-term-m { color: #0f8f63; }
+html.zs-light .zs-term-line[data-level="warn"] .zs-term-m { color: #a16207; }
+html.zs-light .zs-term-line[data-level="error"] .zs-term-m { color: #b91c1c; }
+html.zs-light .zs-term-line[data-level="error"] { background: rgba(185, 28, 28, 0.06); }
+html.zs-light .zs-term-line[data-level="note"] .zs-term-m { color: #2b3140; }
+html.zs-light .zs-term-btn { color: #2b3140; }
+html.zs-light .zs-term-btn:hover { background: rgba(0, 0, 0, 0.06); }
+html.zs-light .zs-term-btn-primary { color: #fff; background: color-mix(in srgb, var(--ms-accent, #6554d9) 30%, #1b2030); }
+html.zs-light .zs-term-svc.is-up { color: #1d232e; }
+
+
+/* ── Bridge split button: terminal icon (log) + caret (what's running) ──── */
+#zs-bridge-run {
+  flex: none; width: 16px; height: 28px; padding: 0; margin-left: -6px;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; color: var(--mono-ink-3, #9a9aa6);
+  border: 1px solid transparent; border-radius: 0 8px 8px 0;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+#zs-bridge-run svg { transition: transform 0.16s ease; }
+#zs-bridge-run:hover { background: color-mix(in srgb, var(--ms-accent, #7c6cf2) 16%, transparent); color: var(--mono-ink, #ededf0); }
+#zs-bridge-run[aria-expanded="true"] { color: var(--ms-accent, #7c6cf2); background: color-mix(in srgb, var(--ms-accent, #7c6cf2) 14%, transparent); }
+#zs-bridge-run[aria-expanded="true"] svg { transform: rotate(180deg); }
+#zs-bridge-run:focus-visible, #zs-bridge:focus-visible { outline: 2px solid var(--ms-accent, #7c6cf2); outline-offset: 1px; }
+#zs-bridge { position: relative; z-index: 1; }
+#zs-bridge:not([data-state="live"]):not([data-state="starting"]):not([data-state="down"]) {
+  color: color-mix(in srgb, var(--ms-accent, #7c6cf2) 70%, #b8b8bf);
+}
+#zs-bridge[data-state="live"] { background: color-mix(in srgb, #34d399 10%, transparent); }
+html.zs-light #zs-bridge-run { color: #4b5563; }
+html.zs-light #zs-bridge-run:hover { color: #1f2430; }
+html.zs-light #zs-bridge[data-state="live"] { color: #059669; }
+html.zs-light #zs-bridge[data-state="starting"] { color: #b45309; }
+html.zs-light #zs-bridge[data-state="down"] { color: #dc2626; }
+html.zs-light #zs-bridge::after { border-color: rgba(255, 255, 255, 0.9); }
+
+/* ── Terminal tabs ─────────────────────────────────────────────────────── */
+.zs-term-tabs {
+  display: flex; gap: 2px; padding: 6px 10px 0; flex: 0 0 auto;
+  border-bottom: 1px solid color-mix(in srgb, var(--ms-ink, #e8e8ec) 9%, transparent);
+}
+.zs-term-tab {
+  appearance: none; background: transparent; border: 0; cursor: pointer;
+  font: 600 11px/1 inherit; font-family: inherit; letter-spacing: 0.2px;
+  color: var(--ms-ink-3, #9494a2);
+  padding: 7px 11px 8px; border-radius: 8px 8px 0 0;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.zs-term-tab:hover { color: var(--ms-ink, #e8e8ec); background: color-mix(in srgb, var(--ms-ink, #e8e8ec) 6%, transparent); }
+.zs-term-tab.is-on { color: var(--ms-ink, #e8e8ec); border-bottom-color: var(--ms-accent, #7c6cf2); }
+.zs-term-count {
+  display: inline-block; min-width: 14px; padding: 1px 5px; margin-left: 3px;
+  border-radius: 99px; font-size: 9.5px; font-weight: 700; text-align: center;
+  background: color-mix(in srgb, var(--ms-accent, #7c6cf2) 24%, transparent);
+  color: var(--ms-ink, #e8e8ec);
+}
+.zs-term-count:empty { display: none; }
+
+/* ── Running overview ──────────────────────────────────────────────────── */
+.zs-term-run {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 6px 12px 10px;
+  scrollbar-width: thin;
+}
+.zs-term-run[hidden], .zs-term-bar[hidden], .zs-term-body[hidden] { display: none; }
+#zs-term[data-tab="running"] .zs-term-acts [data-act="start"],
+#zs-term[data-tab="running"] .zs-term-acts [data-act="restart"],
+#zs-term[data-tab="running"] .zs-term-acts [data-act="stop"] { display: none; }
+.zs-run-sec { padding: 6px 0 4px; }
+.zs-run-sec + .zs-run-sec { border-top: 1px solid color-mix(in srgb, var(--ms-ink, #e8e8ec) 7%, transparent); }
+.zs-run-h {
+  font: 700 9.5px/1 inherit; font-family: inherit; text-transform: uppercase; letter-spacing: 0.9px;
+  color: var(--ms-ink-3, #9494a2); padding: 4px 0 6px;
+}
+.zs-run-row { display: flex; align-items: center; gap: 9px; padding: 4px 2px; min-width: 0; }
+.zs-run-dot {
+  flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: #6b7280;
+}
+.zs-run-dot[data-state="on"]   { background: #34d399; box-shadow: 0 0 6px rgba(52, 211, 153, 0.8); }
+.zs-run-dot[data-state="warn"] { background: #fbbf24; box-shadow: 0 0 6px rgba(251, 191, 36, 0.7); }
+.zs-run-dot[data-state="off"]  { background: #f87171; }
+.zs-run-dot[data-state="idle"] { background: color-mix(in srgb, var(--ms-ink, #e8e8ec) 28%, transparent); }
+.zs-run-dot[data-state="busy"] { background: #fbbf24; animation: zs-bridge-pulse 1.1s ease-in-out infinite; }
+.zs-run-name { font-weight: 600; color: var(--ms-ink, #e8e8ec); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.zs-run-detail { margin-left: auto; color: var(--ms-ink-3, #9494a2); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; padding-left: 8px; }
+.zs-run-badge {
+  flex: 0 0 auto; min-width: 20px; padding: 1px 6px; border-radius: 99px; text-align: center;
+  font-size: 10px; background: color-mix(in srgb, var(--ms-accent, #7c6cf2) 22%, transparent);
+  color: var(--ms-ink, #e8e8ec);
+}
+.zs-run-toggle { display: flex; align-items: center; gap: 8px; padding: 7px 2px 3px; cursor: pointer; color: var(--ms-ink, #d6d6de); }
+.zs-run-toggle input { accent-color: var(--ms-accent, #7c6cf2); margin: 0; }
+.zs-run-acts { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px 0 2px; }
+.zs-term-btn-danger { color: #f87171; border-color: rgba(248, 113, 113, 0.4); }
+.zs-term-btn-danger:hover { background: rgba(248, 113, 113, 0.12); }
+.zs-term-btn:disabled { opacity: 0.5; cursor: progress; }
+html.zs-light .zs-term-tab.is-on, html.zs-light .zs-run-name { color: #1d232e; }
+html.zs-light .zs-term-count { color: #1d232e; }
+html.zs-light .zs-run-toggle { color: #2b3140; }
+html.zs-light .zs-term-btn-danger { color: #b91c1c; }
+
+/* Compact mode: the panel is already narrow-aware, but on a short viewport the
+   log is the part worth keeping, so trim the chrome instead of the output. */
+@media (max-height: 620px) {
+  #zs-term { max-height: 56vh; }
+  .zs-term-line[data-level="note"] { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #zs-term, .zs-term-line { animation: none; }
+  .zs-term-dot[data-state="partial"] { animation: none; }
+}
+
+/* ── Settings tabs: grouped, themed, and legible at seven ────────────────
+   The tab set grew from 4 to 7 when the settings were regrouped (Appearance
+   and Interface split out of the old catch-all Agent tab). These rules make
+   that grouping read clearly rather than just adding more buttons. */
+.zs-menu-tabs button {
+  /* Slightly tighter tracking so seven labels fit on one row at the default
+     370px panel width without ellipsis. */
+  letter-spacing: 0.1px;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}
+/* The active underline is the ONE colour-bearing mark in the tab strip, so it
+   carries the accent - changing the accent restyles the whole tab set live. */
+.zs-menu-tabs button.active {
+  border-color: color-mix(in srgb, var(--ms-accent, #7c6cf2) 55%, transparent) !important;
+  background: color-mix(in srgb, var(--ms-accent, #7c6cf2) 14%, transparent) !important;
+}
+.zs-menu-tabs button.active::after {
+  background: linear-gradient(90deg, transparent, var(--ms-accent, #fff), transparent);
+}
+/* A hairline between grouped sections, so a long tab reads as a stack of cards
+   instead of one flat column of controls. */
+.zs-menu-sec + .zs-menu-sec { border-top: 1px solid var(--mono-line, rgba(255, 255, 255, 0.07)); }
+/* The first section in any tab has already had its top border removed by the
+   :first-of-type rule above; make the "first" test tab-aware by also clearing it
+   on any section that directly follows a hidden one. :first-of-type only ever
+   matches the very first section in the DOM, which is a Setup panel, so every
+   other tab would otherwise show a stray top rule on its first card. */
+.zs-menu-sec[hidden] + .zs-menu-sec { border-top: 0; }
+
+/* Seven labels on a narrow panel: let the strip wrap to two rows instead of
+   squeezing every label to an ellipsis. */
+@media (max-width: 420px) {
+  .zs-menu-tabs { grid-template-columns: repeat(auto-fit, minmax(62px, 1fr)); }
+}
+html.zs-light .zs-menu-tabs button.active {
+  background: color-mix(in srgb, var(--ms-accent, #6554d9) 12%, transparent) !important;
+  color: #2b2b3a !important;
+}
+
+/* ── Notion: model/trial chip + the Notion settings tab ─────────────────── */
+#zs-model {
+  flex: 0 1 auto; min-width: 0; display: flex; align-items: center;
+  height: 28px; padding: 0 10px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--mono-line); background: rgba(255, 255, 255, 0.045); color: var(--mono-ink-2);
+  font: 600 11.5px/1 system-ui, -apple-system, "Segoe UI", sans-serif; white-space: nowrap;
+  transition: background .14s ease, border-color .14s ease;
+}
+#zs-model:hover { background: rgba(255, 255, 255, 0.12); color: var(--mono-ink); border-color: var(--mono-line-strong); }
+#zs-model-text { display: block; max-width: 210px; overflow: hidden; text-overflow: ellipsis; }
+#zs-bar.zs-bar-narrow #zs-model-text { max-width: 128px; }
+#zs-bar.zs-bar-compact #zs-model { padding: 0 8px; }
+#zs-bar.zs-bar-compact #zs-model-text { max-width: 84px; }
+html.zs-light #zs-model { background: rgba(0, 0, 0, 0.04); border-color: rgba(0, 0, 0, 0.12); color: #3a3f4c; }
+html.zs-light #zs-model:hover { background: rgba(0, 0, 0, 0.09); color: #1f2430; }
+
+.zs-nu-summary { font: 650 13px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--mono-ink, #ececf1); margin: 2px 0 6px; }
+.zs-nu-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0; }
+.zs-nu-grid label { display: flex; flex-direction: column; gap: 4px; font: 600 10px system-ui; color: #9a9aa4; }
+.zs-nu-grid input {
+  box-sizing: border-box; width: 100%; padding: 7px 8px; border-radius: 7px; font: 600 12px system-ui;
+  border: 1px solid rgba(255, 255, 255, 0.13); background: rgba(255, 255, 255, 0.045); color: #ececf1;
+}
+.zs-nu-grid input:focus { outline: none; border-color: var(--ms-accent, #d8d8e2); }
+.zs-nm-flags { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 6px; }
+.zs-nm-flag { font: 700 10px system-ui; padding: 3px 8px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.12); color: #aaa; }
+.zs-nm-flag.ok { color: #43c38b; border-color: rgba(67, 195, 139, 0.45); }
+.zs-nm-flag.no { color: #fbbf24; border-color: rgba(251, 191, 36, 0.4); }
+.zs-behavior-opt i { font: 700 8.5px system-ui; font-style: normal; text-transform: uppercase; letter-spacing: .04em; padding: 1px 5px; margin-left: 4px; border-radius: 4px; background: rgba(255, 255, 255, 0.12); color: #cfcfd6; }
+.zs-behavior-opt:disabled { opacity: .45; cursor: not-allowed; }
+.zs-nm-efforts { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.zs-nm-effort.active { border-color: var(--ms-accent, #d8d8e2); background: color-mix(in srgb, var(--ms-accent, #d8d8e2) 16%, transparent); color: #fff; }
+.zs-sec-label.zs-sub { margin-top: 8px; }
+html.zs-light .zs-nu-summary { color: #1f2430; }
+html.zs-light .zs-nu-grid input { background: rgba(0, 0, 0, 0.035); border-color: rgba(0, 0, 0, 0.16); color: #1f2430; }
+html.zs-light .zs-nu-grid label { color: #5b6070; }
+html.zs-light .zs-nm-flag { border-color: rgba(0, 0, 0, 0.16); color: #5b6070; }
+html.zs-light .zs-nm-flag.ok { color: #12794f; border-color: rgba(18, 121, 79, 0.5); }
+html.zs-light .zs-nm-flag.no { color: #9a6700; border-color: rgba(154, 103, 0, 0.5); }
+html.zs-light .zs-behavior-opt i { background: rgba(0, 0, 0, 0.08); color: #3a3f4c; }
+html.zs-light .zs-nm-effort.active { color: #111; }
+
+/* label + badge sit on opposite ends instead of touching */
+.zs-sec-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+/* narrow composers: drop the version tag before the state line is squeezed to nothing */
+#zs-bar.zs-bar-narrow .zs-free { display: none; }

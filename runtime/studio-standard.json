@@ -273,6 +273,17 @@
     "project content inventory",
     "selection summary",
     "sanitized Output report",
-    "no AI execution surface"
+    "opt-in permission-tiered allowlisted companion tools"
+  ],
+  "pluginBoundary": "opt-in-permission-tiered-companion",
+  "robloxCompanionSecurity": [
+    "off by default",
+    "read/project/full tiers",
+    "double permission checks",
+    "ephemeral bearer token",
+    "loopback-only transport",
+    "no HTTP enqueue endpoint",
+    "bounded queue and outputs",
+    "no arbitrary code evaluation"
   ]
 }

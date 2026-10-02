@@ -9,12 +9,14 @@
 ## 1. Extract everything
 Do not run the launcher from inside the ZIP preview. Extract the complete `Multi-Script` folder first.
 
-## 2. Start the local bridge
-- Windows: double-click `start.bat`.
-- macOS: control-click `MacOS_Start.command`, choose Open, and approve it once.
-- Linux: run `bash MacOS_Start.command`.
+## 2. One-time setup (registers the terminal launcher)
+- Windows: double-click `Setup.bat`.
+- macOS: control-click `MacOS_Setup.command`, choose Open, and approve it once.
+- Linux: run `bash MacOS_Setup.command`.
 
-Keep the terminal open. The bridge binds only to `127.0.0.1:17613`.
+Run this after loading the extension (step 3) so Setup can find its ID. Afterwards the **terminal icon in the
+Multi-Script chat bar** starts, stops and monitors the bridge - there is no start script to keep open. The bridge
+binds only to `127.0.0.1:17613`. Manual fallback: `python runtime/bridge.py`.
 
 ## 3. Load the browser extension
 1. Open `chrome://extensions` or `edge://extensions`.

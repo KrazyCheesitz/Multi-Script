@@ -1,0 +1,25 @@
+# Generated/runtime output
+logs/
+runtime/logs/
+runtime/generated/
+release/
+*.zip
+*.sha256
+
+# Python / Node / system caches
+__pycache__/
+*.py[cod]
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local-only development folders
+Compressed/
+Deprecated/
+ExtensionPresentation/
+presentation/
+devtools/
+
+# Local audio-provider secrets
+runtime/.env
+.env

@@ -92,25 +92,29 @@ const ZSProvider = (() => {
   // Arena's router; they never click a model picker, falsify identity, or bypass
   // account/tier availability. Opus 5.5 is the safe default for each new chat.
   const AUTO_ROUTING_PROFILES = {
-    opus55:{label:"Claude Opus 5.5 · Direct Max",requestedModel:"Claude Opus 5.5",availability:"arena-dependent",description:"Default. Request the real Claude Opus 5.5 on every turn while providing Direct Max the current capability mix."},
-    opus5:{label:"Claude Opus 5 · Direct Max",requestedModel:"Claude Opus 5",availability:"arena-dependent",description:"Request the real Claude Opus 5 on every turn with honest fallback."},
-    gpt56:{label:"GPT-5.6 Sol · Direct Max",requestedModel:"GPT-5.6 Sol",availability:"arena-dependent",description:"Request the real GPT-5.6 Sol on every turn when Arena exposes it."},
-    kimi3:{label:"Kimi K3 · Direct Max",requestedModel:"Kimi K3",availability:"arena-dependent",description:"Request the real Kimi K3 on every turn when Arena exposes it."},
-    luna:{label:"GPT-6 Luna · Direct Max",requestedModel:"GPT-6 Luna",availability:"future",description:"Future-ready exact-model request with honest fallback."},
-    directmax:{label:"Direct Max · Untargeted Auto",requestedModel:"Arena Direct Max adaptive routing",availability:"arena-dependent",description:"Optional untargeted mode. Let Direct Max select the strongest legitimately available model for each turn."},
+    opus55:{label:"Claude Opus 5.5 · Direct Max",requestedModel:"Claude Opus 5.5",availability:"arena-dependent",description:"Default model-targeted profile. Ask Direct Max for the exact real Claude Opus 5.5 on every turn when legitimately available."},
+    opus5:{label:"Claude Opus 5 · Direct Max",requestedModel:"Claude Opus 5",availability:"arena-dependent",description:"Ask Direct Max for the exact real Claude Opus 5 on every turn, with honest fallback only when unavailable."},
+    gpt56:{label:"GPT-5.6 Sol · Direct Max",requestedModel:"GPT-5.6 Sol",availability:"arena-dependent",description:"Ask Direct Max for the exact real GPT-5.6 Sol on every turn when Arena exposes it."},
+    kimi3:{label:"Kimi K3 · Direct Max",requestedModel:"Kimi K3",availability:"arena-dependent",description:"Ask Direct Max for the exact real Kimi K3 on every turn when available."},
+    luna:{label:"GPT-6 Luna · Direct Max",requestedModel:"GPT-6 Luna",availability:"future",description:"Future-ready exact-model request on every turn, with honest fallback until Arena offers it."},
+    directmax:{label:"Direct Max · Untargeted Auto",requestedModel:"Arena Direct Max adaptive routing",availability:"arena-dependent",description:"Optional untargeted mode. Let Direct Max choose any available model from the current capability mix."},
   };
   const ARENA_PROFILE_KEY="zs.arena.autoRoutingProfile";
-  const ARENA_CAPABILITIES=["native-tool-execution","coding-architecture","quantitative-reasoning","visual-spatial","research-currentness","creative-production","long-context-integration","verification-critique"];
+  // An explicitly stored empty string is a real off mode: no starter routing block
+  // and no per-turn Direct Max envelope. The normal engine/chat-only bootstrap remains.
+  // An explicitly stored empty string is a real off mode: no starter routing block
+  // and no per-turn Direct Max envelope. The normal engine/chat-only bootstrap remains.
   function getAutoRoutingProfile(){try{const x=localStorage.getItem(ARENA_PROFILE_KEY);return x===""?"":(AUTO_ROUTING_PROFILES[x]?x:"opus55");}catch{return "opus55";}}
   function setAutoRoutingProfile(id){const safe=AUTO_ROUTING_PROFILES[id]?id:(id===""?"":"opus55");try{localStorage.setItem(ARENA_PROFILE_KEY,safe);}catch{}return safe;}
   function autoRoutingProfiles(){return Object.entries(AUTO_ROUTING_PROFILES).map(([id,x])=>({id,...x}));}
   function getStartupProfilePrompt(){
     const id=getAutoRoutingProfile(),p=AUTO_ROUTING_PROFILES[id];if(!p)return "";
-    if(id==="directmax") return `[ARENA DIRECT MAX ADAPTIVE STARTER PROFILE — PROMPT-ONLY]\nUse Arena Direct Max's legitimate router independently for every turn. Re-evaluate the current prompt for coding, math, research, vision, creative production, native tool execution, long-context integration, and verification. Preserve exact MCP schemas/results and project state. Never automate a model picker or bypass plans, quotas, verification, availability, or access controls.`;
-    return `[ARENA DIRECT MAX MODEL-TARGETED STARTER PROFILE — PROMPT-ONLY]\nPreferred exact backend: ${p.requestedModel}. For each turn, use Direct Max's legitimate routing analysis together with that turn's genuine capability mix to request the real ${p.requestedModel}. Re-apply this exact-model request independently on the next turn. If unavailable for this account, region, tier, or moment, use the best legitimately available fallback without claiming to be ${p.requestedModel}. Never impersonate a model, automate the picker, or bypass access, plans, quotas, or verification.`;
+    if(id==="directmax") return `[ARENA DIRECT MAX ADAPTIVE STUDIO ROUTER — PROMPT-ONLY]\nUse Arena Direct Max's legitimate router independently for EVERY turn. Re-evaluate the current prompt and conversation state for coding, architecture, math, long-context reasoning, research/search, visual understanding, creative production, tool execution, and verification needs; route to Arena's strongest legitimately available underlying model for that turn, and allow the backend model to change later when the task changes. Preserve Multi-Script's exact live MCP schemas, tool results, project constraints, and unfinished state across any route change. Do not pin the whole conversation to the first model, impersonate a model, expose hidden chain-of-thought, automate the model picker, or bypass plans, quotas, verification, availability, or access controls.`;
+    return `[ARENA DIRECT MAX MODEL-TARGETED STARTER PROFILE — PROMPT-ONLY]\nPreferred exact real backend: ${p.requestedModel}. For EVERY turn independently, ask Arena Direct Max's legitimate router to route that current prompt to the real ${p.requestedModel} when it is actually available and eligible for this account, region, tier, and task. Include the prompt's real capability mix so Direct Max can recognize why this route is being requested, but never invent task requirements merely to manipulate routing. If ${p.requestedModel} is unavailable, use Arena's strongest legitimately available fallback and never impersonate or claim ${p.requestedModel}. Re-evaluate the exact-model request on later turns instead of anchoring to whichever backend answered first. This is prompt-only model targeting; it does not click the picker or bypass access, plans, quotas, verification, or availability.`;
   }
   function _arenaCapabilities(text){
-    const x=String(text||"").toLowerCase(),out=[];const add=(name,re)=>{if(re.test(x))out.push(name);};
+    const x=String(text||"").toLowerCase(),out=[];
+    const add=(name,re)=>{if(re.test(x))out.push(name);};
     add("native-tool-execution",/mcp|tool|command|schema|engine|studio|unity|godot|blender|roblox/);
     add("coding-architecture",/code|script|program|debug|api|network|database|shader|algorithm|architecture/);
     add("quantitative-reasoning",/math|equation|calculate|probability|physics|balance|budget|optimi[sz]|profile/);
@@ -123,12 +127,12 @@ const ZSProvider = (() => {
   }
   function prepareOutboundPrompt(text){
     text=String(text??"");const id=getAutoRoutingProfile(),p=AUTO_ROUTING_PROFILES[id];
-    if(!p||!text.trim()||text.includes("[ARENA DIRECT MAX MODEL-TARGETED TURN SIGNAL — PROMPT-ONLY]")||text.includes("[ARENA DIRECT MAX TURN SIGNAL — PROMPT-ONLY]"))return text;
-    const capabilities=_arenaCapabilities(text);
-    if(id==="directmax")return `[ARENA DIRECT MAX TURN SIGNAL — PROMPT-ONLY]\nCurrent capability mix: ${capabilities.join(", ")}. Independently route this turn to Arena's strongest legitimately available model. Preserve exact tool schemas/results and continuity. No picker automation or access bypass.\n\n${text}`;
-    return `[ARENA DIRECT MAX MODEL-TARGETED TURN SIGNAL — PROMPT-ONLY]\nPreferred exact backend for THIS turn: ${p.requestedModel}. Genuine capability mix: ${capabilities.join(", ")}. Ask Direct Max to route this turn to the real ${p.requestedModel} when legitimately available and eligible. If unavailable, use an honest fallback without claiming that identity. Re-evaluate and re-apply the exact-model request next turn. No picker automation, quota/plan/verification bypass, or model impersonation.\n\n${text}`;
+    if(!p||!text.trim()||text.includes("[ARENA DIRECT MAX TURN SIGNAL — PROMPT-ONLY]")||text.includes("[ARENA DIRECT MAX MODEL-TARGETED TURN SIGNAL — PROMPT-ONLY]"))return text;
+    const capabilities=_arenaCapabilities(text),mix=capabilities.join(", ");
+    if(id==="directmax") return `[ARENA DIRECT MAX TURN SIGNAL — PROMPT-ONLY]\nCurrent capability mix: ${mix}. Independently route THIS turn to Arena's strongest legitimately available model for that mix; a later turn may use a different model. Preserve exact tool schemas/results and continuity. This signal does not select a picker model or bypass access.\n\n${text}`;
+    return `[ARENA DIRECT MAX MODEL-TARGETED TURN SIGNAL — PROMPT-ONLY]\nPreferred exact real backend for THIS turn: ${p.requestedModel}. Current capability mix: ${mix}. Ask Arena Direct Max to route this prompt to the real ${p.requestedModel} when legitimately available and eligible. If unavailable, use the strongest legitimate fallback without impersonating ${p.requestedModel}. Re-apply this exact-model request independently on the next turn. No picker automation or access bypass.\n\n${text}`;
   }
-  function routingProfileDiagnostics(){const id=getAutoRoutingProfile(),p=AUTO_ROUTING_PROFILES[id],targeted=!!p&&id!=="directmax";return p?{provider:"arena",profile:id,requestedModel:p.requestedModel,promptReady:true,routing:"prompt-only",modelTargeted:targeted,modelPinned:false,perTurnRouting:true,dynamicCapabilities:ARENA_CAPABILITIES.slice(),automaticPicker:false,accessBypass:false}:{provider:"arena",profile:"",promptReady:false,routing:"standard",modelTargeted:false,modelPinned:false,perTurnRouting:false,dynamicCapabilities:[],automaticPicker:false,accessBypass:false};}
+  function routingProfileDiagnostics(){const id=getAutoRoutingProfile(),p=AUTO_ROUTING_PROFILES[id],caps=["native-tool-execution","coding-architecture","quantitative-reasoning","visual-spatial","research-currentness","creative-production","long-context-integration","verification-critique"];return p?{provider:"arena",profile:id,requestedModel:p.requestedModel,promptReady:true,routing:"prompt-only",perTurnRouting:true,modelTargeted:id!=="directmax",modelPinned:false,dynamicCapabilities:caps,automaticPicker:false,accessBypass:false}:{provider:"arena",profile:"",promptReady:false,routing:"disabled",normalStartup:true,perTurnRouting:false,modelTargeted:false,modelPinned:false,dynamicCapabilities:[],automaticPicker:false,accessBypass:false};}
 
 
   // ── Turn classification ───────────────────────────────────────────────────
@@ -474,10 +478,15 @@ const ZSProvider = (() => {
     el.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
-  async function waitForHumanVerification(timeoutMs = 120000) {
+  // Short safety net only: the CORE owns the long verification wait (see
+  // awaitHumanVerification in core/main.js, which parks with a visible banner and
+  // auto-resumes). This guard exists purely so a challenge that appears in the
+  // instant between the core's check and the actual send cannot be typed into.
+  async function waitForHumanVerification(timeoutMs = 60000) {
     if (!captchaPresent()) return true;
     const started = Date.now();
-    diag("arena.human_verification.wait", { timeoutMs });
+    const challenge = detectChallenge();
+    diag("arena.human_verification.wait", { timeoutMs, kind: challenge ? challenge.kind : null });
     while (captchaPresent() && Date.now() - started < timeoutMs) await sleep(400);
     const cleared = !captchaPresent();
     diag("arena.human_verification.done", { cleared, waitedMs: Date.now() - started });
@@ -683,15 +692,46 @@ const ZSProvider = (() => {
   }
 
   // A bot-check challenge is on screen (Cloudflare Turnstile / hCaptcha /
-  // reCAPTCHA). We NEVER interact with it: the core reads this only to move the
-  // Multi-Script bar out of the way: the anchored bar is transparent but still a
+  // reCAPTCHA / Arkose FunCaptcha / DataDome / PerimeterX / GeeTest, or a plain
+  // "verify you are human" interstitial). The core reads this to pause, move the
+  // Multi-Script bar out of the way (the anchored bar is transparent but still a
   // real, full-width element over the composer's top edge, so it silently eats
-  // clicks on the challenge's "Valider" button even though nothing is visible.
+  // clicks on the challenge's "Valider" button even though nothing is visible),
+  // tell the user what to do, and then RESUME BY ITSELF once the challenge
+  // clears. Solving, token-injecting, outsourcing or otherwise bypassing the
+  // challenge is never attempted. In the enabled "Assist" mode the core may also
+  // dispatch ONE trusted click on the provider's OWN widget via
+  // assistChallengeClick() - never a token read, never an API call, never a
+  // retry. See core/verification.js for why that is the honest boundary.
+  //
+  // Selector coverage is deliberately broad because Arena's provider can change
+  // without notice; the TEXT probe below is the second, independent signal, so a
+  // reskin that drops a class still gets caught by the wording on screen.
   const CAPTCHA_SEL =
     'iframe[src*="challenges.cloudflare.com"],' +
+    'iframe[src*="turnstile"],' +
     'iframe[src*="hcaptcha.com"],' +
     'iframe[src*="recaptcha"],' +
-    '.cf-turnstile,.h-captcha,.g-recaptcha';
+    'iframe[src*="arkoselabs"],' +
+    'iframe[src*="funcaptcha"],' +
+    'iframe[src*="datadome"],' +
+    'iframe[src*="captcha-delivery"],' +
+    'iframe[src*="perimeterx"],' +
+    'iframe[src*="perimeterx.net"],' +
+    'iframe[src*="px-cdn"],' +
+    'iframe[src*="px-captcha"],' +
+    'iframe[src*="human-challenge"],' +
+    'iframe[src*="geetest"],' +
+    '.cf-turnstile,.cf-challenge,.cf-challenge-running,' +
+    '.h-captcha,.g-recaptcha,.grecaptcha-badge,' +
+    '.geetest_holder,#px-captcha,#captcha-container,[data-testid*="captcha" i]';
+  // Wording a bot-check interstitial shows. Kept to phrases that do not appear
+  // in ordinary chat content, and always paired with a visibility + size test.
+  const CHALLENGE_TEXT_RE =
+    /verify (?:you are|that you are) (?:a )?human|are you a robot|checking your browser|just a moment|unusual traffic|complete the security check|human verification|bot check|security check required|veuillez (?:v[ée]rifier|confirmer)|v[ée]rification humaine|je ne suis pas un robot/i;
+  // The element kinds a challenge interstitial is actually rendered in. Scoped
+  // so a model QUOTING the phrase inside a chat reply can never trip it.
+  const CHALLENGE_HOSTS = '[role="alertdialog"],[role="dialog"],main > div,body > div,form,#challenge,#challenge-stage';
   // Truly on-screen? offsetParent ignores visibility:hidden / opacity:0, so we
   // must walk ancestors. This is what excludes Arena's ALWAYS-present reCAPTCHA
   // v3 badge (a 256x60 .grecaptcha-badge kept at visibility:hidden), which used
@@ -706,11 +746,127 @@ const ZSProvider = (() => {
     if (r.width < 40 || r.height < 40) return false; // tiny badge, not a challenge
     return r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth;
   }
-  function captchaPresent() {
+  // Which challenge is on screen, if any. Returns { kind, hint } or null.
+  // `kind` is a stable machine id (diagnostics / tests), `hint` is the short
+  // human line the core shows in its banner.
+  function detectChallenge() {
     for (const el of document.querySelectorAll(CAPTCHA_SEL)) {
-      if (reallyVisible(el)) return true;
+      if (el.closest("#zs-root")) continue;
+      if (!reallyVisible(el)) continue;
+      // Identify the challenge from EVERYTHING the element exposes, not just its
+      // src: a provider that renders Turnstile inline (a styled <div> with no
+      // iframe yet) still carries the class, and the hint is what the user reads
+      // in the banner. Falls back to a generic id rather than guessing.
+      const sig = [
+        (el.getAttribute && el.getAttribute("src")) || "",
+        // getAttribute("class") rather than .className: on SVG elements
+        // className is an SVGAnimatedString object, not a string, so a class-based
+        // challenge id would be lost there.
+        (el.getAttribute && el.getAttribute("class")) || (typeof el.className === "string" ? el.className : ""),
+        el.id || "",
+        (el.getAttribute && el.getAttribute("data-testid")) || "",
+        (el.getAttribute && el.getAttribute("data-sitekey")) || "",
+      ].join(" ").toLowerCase();
+      const kind = /cloudflare|turnstile|cf-challenge/.test(sig) ? "cloudflare-turnstile"
+        : /hcaptcha|h-captcha/.test(sig) ? "hcaptcha"
+        : /recaptcha|g-recaptcha/.test(sig) ? "recaptcha"
+        : /arkose|funcaptcha/.test(sig) ? "arkose"
+        : /datadome|captcha-delivery/.test(sig) ? "datadome"
+        : /perimeterx|px-captcha|px-cdn|human-challenge/.test(sig) ? "perimeterx"
+        : /geetest/.test(sig) ? "geetest"
+        : "embedded-challenge";
+      return { kind, hint: `a ${kind.replace(/-/g, " ")} widget is on the page` };
     }
-    return false;
+    // Second, independent signal: the wording of an interstitial, which survives
+    // a class-name reskin. Requires a visible, prominent, chat-free host element
+    // so model output quoting the phrase is never mistaken for a challenge.
+    for (const el of document.querySelectorAll(CHALLENGE_HOSTS)) {
+      if (el.closest("#zs-root") || el.closest(S.list)) continue;
+      if (el.childElementCount > 12) continue; // a whole page, not a check card
+      if (!reallyVisible(el)) continue;
+      const t = (el.innerText || "").trim();
+      if (t.length > 400 || t.length < 8) continue;
+      if (!CHALLENGE_TEXT_RE.test(t)) continue;
+      return { kind: "text-challenge", hint: `the page says: "${t.split("\n")[0].slice(0, 90)}"` };
+    }
+    return null;
+  }
+  function captchaPresent() {
+    try { return !!detectChallenge(); } catch { return false; }
+  }
+  // One-line description of what was detected, for the core's verification
+  // banner. Empty when nothing is on screen.
+  function verificationHint() {
+    const d = detectChallenge();
+    return d ? d.hint : "";
+  }
+  // ── Assisted first-click ────────────────────────────────────────────────
+  // The closest thing to "keeping it running" that is NOT a bypass. On a
+  // checkbox-style challenge (Cloudflare Turnstile in managed mode, hCaptcha
+  // passive) the widget presents a real checkbox and a single trusted click is
+  // exactly what a human does - nothing is read, forged, harvested or injected.
+  // We click the widget's own host element and STOP there: if the provider then
+  // renders a puzzle or asks for more, no amount of scripted clicking is
+  // legitimate, and we hand it back to the human.
+  //
+  // Deliberately NOT done here (and asserted absent by test): reading or writing
+  // any token field, calling grecaptcha/hcaptcha execute APIs, postMessage into
+  // the challenge iframe, or contacting any third-party solving service. Those
+  // are the things that get accounts closed.
+  function challengeClickTarget() {
+    // Only the challenge HOSTS that are safe to click: the widget container,
+    // never an inner control we cannot verify. A real iframe cannot be
+    // scripted from here anyway (cross-origin), so for iframe-based challenges
+    // this resolves to the visible host box, which is what a human aims at.
+    const sel =
+      '.cf-turnstile,' +
+      '.h-captcha,' +
+      '.g-recaptcha:not(.grecaptcha-badge),' +
+      '#px-captcha,' +
+      '#captcha-container,' +
+      '[data-testid*="captcha" i],' +
+      'iframe[src*="challenges.cloudflare.com"],' +
+      'iframe[src*="hcaptcha.com"],' +
+      'iframe[src*="recaptcha"]';
+    for (const el of document.querySelectorAll(sel)) {
+      if (el.closest("#zs-root")) continue;
+      // The always-present reCAPTCHA v3 badge is not an interactive challenge.
+      if (el.classList && el.classList.contains("grecaptcha-badge")) continue;
+      if (!reallyVisible(el)) continue;
+      return el;
+    }
+    return null;
+  }
+  // Perform ONE trusted click on the provider's own challenge widget. Returns a
+  // small result object for diagnostics: { clicked, reason, tag }. Never throws
+  // and never retries - a repeat click is exactly what makes this look scripted.
+  function assistChallengeClick() {
+    let el = null;
+    try { el = challengeClickTarget(); } catch { el = null; }
+    if (!el) return { clicked: false, reason: "no-widget" };
+    try {
+      const r = el.getBoundingClientRect();
+      // Aim at the widget's visual centre - for a checkbox widget that is the
+      // box itself, which is the whole gesture a human makes.
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      const base = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
+      // A full pointer + mouse sequence reads as a real interaction, rather
+      // than a bare synthetic click that some widgets ignore.
+      if (typeof PointerEvent === "function") {
+        el.dispatchEvent(new PointerEvent("pointerdown", { ...base, pointerId: 1, isPrimary: true, button: 0 }));
+      }
+      el.dispatchEvent(new MouseEvent("mousedown", { ...base, button: 0 }));
+      if (typeof PointerEvent === "function") {
+        el.dispatchEvent(new PointerEvent("pointerup", { ...base, pointerId: 1, isPrimary: true, button: 0 }));
+      }
+      el.dispatchEvent(new MouseEvent("mouseup", { ...base, button: 0 }));
+      el.dispatchEvent(new MouseEvent("click", { ...base, button: 0 }));
+      // NOTE: stop here. No token read, no API call, no retry, no loop.
+      return { clicked: true, tag: el.tagName ? el.tagName.toLowerCase() : "el" };
+    } catch (e) {
+      return { clicked: false, reason: "click-failed", detail: String(e && e.message || e) };
+    }
   }
 
   // A modal dialog (login / create-account / consent) is open over the page.
@@ -735,16 +891,21 @@ const ZSProvider = (() => {
   // sweep), so the comparison commits to candidate A and the loop reads a single
   // normal reply.
   function enforceComposer() {
-    resolveBattle();
+    // While a challenge is up the page is not ours to drive: clicking an A/B
+    // "Continuer avec A" button would be an interaction with a page the site has
+    // explicitly frozen for verification. Skip every write until it clears.
+    if (!captchaPresent()) resolveBattle();
     return { ready: isSupportedMode() };
   }
   async function ensureComposerReady(reason) {
     const supported = isSupportedMode();
-    const humanVerificationRequired = captchaPresent();
-    diag("mode_ready", { reason, provider: "arena", mode: currentMode(), supported, humanVerificationRequired });
-    // Never automate, solve, token-inject, or bypass a challenge. The core gets
-    // out of the way so the user can complete it, then Start can be pressed again.
-    if (humanVerificationRequired) return { ready: false, humanVerificationRequired: true };
+    const challenge = detectChallenge();
+    const humanVerificationRequired = !!challenge;
+    diag("mode_ready", { reason, provider: "arena", mode: currentMode(), supported, humanVerificationRequired, challenge: challenge ? challenge.kind : null });
+    // Never automate, solve, token-inject, or bypass a challenge. The core parks
+    // until the user clears it and then continues the same turn (see
+    // awaitHumanVerification in core/main.js).
+    if (humanVerificationRequired) return { ready: false, humanVerificationRequired: true, verificationKind: challenge.kind, verificationHint: challenge.hint };
     return { ready: supported && !!getEditor(), humanVerificationRequired: false };
   }
 
@@ -956,6 +1117,7 @@ const ZSProvider = (() => {
     setInputLock, typeAndSend, stopGeneration,
     isGenerating, isBusyNow, isHardGenerating,
     enforceComposer, ensureComposerReady, modeWarning, captchaPresent, waitForHumanVerification, overlayBlocking,
+    detectChallenge, verificationHint, challengeClickTarget, assistChallengeClick,
     turnHalted, findContinueBtn, clickContinueBtn,
     scanError, isTooLongMsg, isBusyMsg,
     // actions

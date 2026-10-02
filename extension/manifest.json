@@ -1,18 +1,24 @@
 {
   "manifest_version": 3,
   "name": "Multi-Script \u00b7 Multi-Engine AI Studio",
-  "version": "6.13.0",
+  "version": "6.24.0",
   "description": "Customizable multi-provider AI workflows for Roblox, Unity, Godot, Blender, Figma, and MCP tools.",
   "permissions": [
     "storage",
     "activeTab",
-    "scripting"
+    "scripting",
+    "tabs",
+    "nativeMessaging"
   ],
   "host_permissions": [
     "https://chat.deepseek.com/*",
     "https://deepseek.com/*",
     "https://chatgpt.com/*",
     "https://chat.openai.com/*",
+    "https://claude.ai/*",
+    "https://www.claude.ai/*",
+    "https://claude.com/*",
+    "https://www.claude.com/*",
     "https://gemini.google.com/*",
     "https://www.kimi.ai/*",
     "https://kimi.ai/*",
@@ -28,7 +34,8 @@
     "https://notion.so/*",
     "https://www.notion.so/*",
     "https://notion.com/*",
-    "https://www.notion.com/*"
+    "https://www.notion.com/*",
+    "https://app.notion.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -55,10 +62,18 @@
         "https://chat.deepseek.com/*"
       ],
       "js": [
+        "core/engines.js",
         "core/config.js",
         "core/parser.js",
         "providers/deepseek.js",
         "core/tool-routing.js",
+        "core/pacing.js",
+        "core/resilience.js",
+        "core/verification.js",
+        "core/enhancer.js",
+        "core/media-relay.js",
+        "core/trust.js",
+        "core/terminal.js",
         "core/main.js"
       ],
       "css": [
@@ -83,10 +98,45 @@
         "https://chat.openai.com/*"
       ],
       "js": [
+        "core/engines.js",
         "core/config.js",
         "core/parser.js",
         "providers/chatgpt.js",
         "core/tool-routing.js",
+        "core/pacing.js",
+        "core/resilience.js",
+        "core/verification.js",
+        "core/enhancer.js",
+        "core/media-relay.js",
+        "core/trust.js",
+        "core/terminal.js",
+        "core/main.js"
+      ],
+      "css": [
+        "overlay.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://claude.ai/*",
+        "https://www.claude.ai/*",
+        "https://claude.com/*",
+        "https://www.claude.com/*"
+      ],
+      "js": [
+        "core/engines.js",
+        "core/config.js",
+        "core/parser.js",
+        "providers/claude.js",
+        "core/tool-routing.js",
+        "core/pacing.js",
+        "core/resilience.js",
+        "core/verification.js",
+        "core/enhancer.js",
+        "core/media-relay.js",
+        "core/trust.js",
+        "core/terminal.js",
         "core/main.js"
       ],
       "css": [
@@ -99,10 +149,18 @@
         "https://gemini.google.com/*"
       ],
       "js": [
+        "core/engines.js",
         "core/config.js",
         "core/parser.js",
         "providers/gemini.js",
         "core/tool-routing.js",
+        "core/pacing.js",
+        "core/resilience.js",
+        "core/verification.js",
+        "core/enhancer.js",
+        "core/media-relay.js",
+        "core/trust.js",
+        "core/terminal.js",
         "core/main.js"
       ],
       "css": [
@@ -116,10 +174,18 @@
         "https://kimi.ai/*"
       ],
       "js": [
+        "core/engines.js",
         "core/config.js",
         "core/parser.js",
         "providers/kimi.js",
         "core/tool-routing.js",
+        "core/pacing.js",
+        "core/resilience.js",
+        "core/verification.js",
+        "core/enhancer.js",
+        "core/media-relay.js",
+        "core/trust.js",
+        "core/terminal.js",
         "core/main.js"
       ],
       "css": [
@@ -132,10 +198,18 @@
         "https://chat.z.ai/*"
       ],
       "js": [
+        "core/engines.js",
         "core/config.js",
         "core/parser.js",
         "providers/glm.js",
         "core/tool-routing.js",
+        "core/pacing.js",
+        "core/resilience.js",
+        "core/verification.js",
+        "core/enhancer.js",
+        "core/media-relay.js",
+        "core/trust.js",
+        "core/terminal.js",
         "core/main.js"
       ],
       "css": [
@@ -148,10 +222,18 @@
         "https://arena.ai/*"
       ],
       "js": [
+        "core/engines.js",
         "core/config.js",
         "core/parser.js",
         "providers/arena.js",
         "core/tool-routing.js",
+        "core/pacing.js",
+        "core/resilience.js",
+        "core/verification.js",
+        "core/enhancer.js",
+        "core/media-relay.js",
+        "core/trust.js",
+        "core/terminal.js",
         "core/main.js"
       ],
       "css": [
@@ -165,10 +247,18 @@
         "https://meta.ai/*"
       ],
       "js": [
+        "core/engines.js",
         "core/config.js",
         "core/parser.js",
         "providers/meta.js",
         "core/tool-routing.js",
+        "core/pacing.js",
+        "core/resilience.js",
+        "core/verification.js",
+        "core/enhancer.js",
+        "core/media-relay.js",
+        "core/trust.js",
+        "core/terminal.js",
         "core/main.js"
       ],
       "css": [
@@ -191,10 +281,18 @@
         "https://chat.qwen.ai/*"
       ],
       "js": [
+        "core/engines.js",
         "core/config.js",
         "core/parser.js",
         "providers/qwen.js",
         "core/tool-routing.js",
+        "core/pacing.js",
+        "core/resilience.js",
+        "core/verification.js",
+        "core/enhancer.js",
+        "core/media-relay.js",
+        "core/trust.js",
+        "core/terminal.js",
         "core/main.js"
       ],
       "css": [
@@ -209,13 +307,23 @@
         "https://notion.so/*",
         "https://www.notion.so/*",
         "https://notion.com/*",
-        "https://www.notion.com/*"
+        "https://www.notion.com/*",
+        "https://app.notion.com/*"
       ],
       "js": [
+        "core/engines.js",
         "core/config.js",
         "core/parser.js",
         "providers/notion.js",
         "core/tool-routing.js",
+        "core/pacing.js",
+        "core/resilience.js",
+        "core/verification.js",
+        "core/enhancer.js",
+        "core/media-relay.js",
+        "core/trust.js",
+        "core/notion-usage.js",
+        "core/terminal.js",
         "core/main.js"
       ],
       "css": [
@@ -225,5 +333,5 @@
     }
   ],
   "short_name": "Multi-Script",
-  "version_name": "6.13.0 Product Critic and Roblox Diagnostics"
+  "version_name": "6.24.0 Studio"
 }

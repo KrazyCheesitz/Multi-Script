@@ -77,8 +77,9 @@ const ZSProvider = (() => {
       "i"
     ),
     tooLong: /conversation .{0,20}(too long|getting too long|trop longue)|context .{0,15}(length|window)/i,
-    // NB: the core no longer acts on isBusyMsg (a "busy" reply just ends the loop
-    // as a normal terminal turn), but keep this matching the site's ACTUAL error
+    // NB: the core DOES act on isBusyMsg again (6.16.0): a short, non-command
+    // reply matching this pattern is classified kind:"busy" and given ONE bounded
+    // retry by the recovery policy. So keep this matching the site's ACTUAL error
     // phrasing, not the model's prose: a bare "try again" / "réessayer" also fires
     // on normal answers that tell the USER to try again (e.g. "the Blender addon
     // isn't running... then try again"). Require "please try again" / "réessayer

@@ -1,8 +1,8 @@
 {
   "product": "Multi-Script",
-  "version": "6.17.0",
-  "generatedAtUnix": 1790230167,
-  "durationSeconds": 178.211,
+  "version": "6.24.0",
+  "generatedAtUnix": 1790881786,
+  "durationSeconds": 195.977,
   "verdict": "pass",
   "rounds": [
     {
@@ -23,7 +23,7 @@
       "verdict": "pass",
       "findings": [],
       "evidence": [
-        "51/51 checks passed",
+        "77/77 checks passed",
         "Python, JavaScript, provider, schema, plugin, security, release and archive-facing gates executed"
       ]
     },
@@ -33,7 +33,7 @@
       "verdict": "pass",
       "findings": [],
       "evidence": [
-        "no forbidden Roblox plugin execution surfaces",
+        "companion defaults Off and exposes no arbitrary evaluation",
         "all catalogue items retain explicit engine/runtime contracts",
         "release evidence is machine-readable"
       ],
@@ -58,361 +58,543 @@
   ],
   "testChecks": [
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_all_skills_and_tools.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_all_skills_and_tools.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 147.598,
-      "tail": "PASS exhaustive skill/tool audit: 800 skills retrieved, queried, recommended; 210 tools and all branch enums exercised\n"
+      "durationSeconds": 164.113,
+      "tail": "PASS exhaustive skill/tool audit: 800 skills retrieved, queried, recommended; 230 tools and all branch enums exercised\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_bridge_builtins.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_bridge_builtins.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.285,
+      "durationSeconds": 0.324,
       "tail": "PASS bridge built-ins and critic loop\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_brief_and_scorecard.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_brief_and_scorecard.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.241,
+      "durationSeconds": 0.271,
       "tail": "PASS general quality enhancer example and scorecard\nPASS task-first classic Roblox UI silent quality boost\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_creative_execution_standards.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_creative_execution_standards.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.088,
+      "durationSeconds": 0.092,
       "tail": "PASS 6.8 cross-engine animation, VFX, texture and real-artifact execution standards\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_creative_surfaces.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_creative_surfaces.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.237,
+      "durationSeconds": 0.312,
       "tail": "PASS real SVG texture/UI creation and Figma-ready handoff\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_critic_loop_613.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_critic_loop_613.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.141,
+      "durationSeconds": 0.155,
       "tail": "PASS three-round product critic: architecture, regressions placeholder, opportunities and release verdict\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_elevenlabs_audio.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_desktop_vision.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.074,
+      "durationSeconds": 0.083,
+      "tail": "merges both halves\n  ok  worker handles surface_list\n  ok  worker handles surface_focus\n  ok  worker handles surface_read\n  ok  worker handles surface_open\n  ok  worker handles surface_type\n  ok  worker handles surface_close\n  ok  surfaceList is defined\n  ok  reads use executeScript so no extra host permissions are needed\n  ok  surface_open refuses non-web schemes\n  ok  tab readback is capped to keep prompts small\n  ok  main.js merges windows+tabs\n  ok  main.js intercepts ms_surface_list locally\n  ok  surface verbs are forwarded to the worker\n  ok  the merge is actually wired in\n  ok  manifest requests the tabs permission\n  ok  manifest keeps scripting for executeScript\n\n12. no advertised surface tool is a dead end\n  ok  ms_surface_list is advertised AND handled\n  ok  ms_surface_read is advertised AND handled\n  ok  ms_surface_type is advertised AND handled\n  ok  ms_surface_open is advertised AND handled\n  ok  ms_surface_focus is advertised AND handled\n  ok  ms_app_list is advertised AND handled\n  ok  ms_app_snapshot is advertised AND handled\n  ok  ms_app_read_window is advertised AND handled\n  ok  ms_app_setup_plan is advertised AND handled\n\ntest_desktop_vision: 12 sections passed\n"
+    },
+    {
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_elevenlabs_audio.py",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.085,
       "tail": "PASS ElevenLabs secure status, authenticated request, audio save, metadata, listing and missing-key path\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_elevenlabs_settings.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_elevenlabs_settings.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.064,
+      "durationSeconds": 0.069,
       "tail": "PASS per-user ElevenLabs local key save, sanitized status and removal\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_engine_schema_assurance_69.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_engine_schema_assurance_69.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.221,
-      "tail": "PASS 6.9 recursive MCP schemas, strict engine binding, 800 skills, 300 virtual specialists, 210 direct tools, and risk audit\n"
+      "durationSeconds": 0.239,
+      "tail": "PASS 6.9 recursive MCP schemas, strict engine binding, 800 skills, 300 virtual specialists, 230 direct tools, and risk audit\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_full_spectrum_skill_mesh.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_form_craft.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.46,
+      "durationSeconds": 0.067,
+      "tail": "nce.test_guidance_names_the_cylindrical_and_box_families) ... ok\ntest_only_a_small_minority_of_features_are_spheres (__main__.PromptGuidance.test_only_a_small_minority_of_features_are_spheres)\nThe whole point: spheres must be rare in the mapping. ... ok\ntest_a_cable_is_a_swept_curve_not_a_sphere (__main__.TheReportedBug.test_a_cable_is_a_swept_curve_not_a_sphere) ... ok\ntest_a_genuine_sphere_still_classifies_as_one (__main__.TheReportedBug.test_a_genuine_sphere_still_classifies_as_one) ... ok\ntest_a_limb_is_not_a_sphere (__main__.TheReportedBug.test_a_limb_is_not_a_sphere) ... ok\ntest_a_mechanical_plate_is_not_a_sphere (__main__.TheReportedBug.test_a_mechanical_plate_is_not_a_sphere) ... ok\ntest_empty_input_falls_back_to_box_never_sphere (__main__.TheReportedBug.test_empty_input_falls_back_to_box_never_sphere) ... ok\ntest_longest_keyword_wins_so_ball_joint_beats_ball (__main__.TheReportedBug.test_longest_keyword_wins_so_ball_joint_beats_ball) ... ok\ntest_unmatched_input_falls_back_to_box_never_sphere (__main__.TheReportedBug.test_unmatched_input_falls_back_to_box_never_sphere) ... ok\n\n----------------------------------------------------------------------\nRan 23 tests in 0.002s\n\nOK\n"
+    },
+    {
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_full_spectrum_skill_mesh.py",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.495,
       "tail": "PASS comprehensive skill/tool mesh: weak prompts receive simultaneous specialist coverage without a generic multiplier\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_full_spectrum_studio.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_full_spectrum_studio.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.341,
+      "durationSeconds": 0.378,
       "tail": "PASS full-spectrum studio coordination: concrete animation, UI, modeling and all supporting disciplines\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_intent_to_product_intelligence.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_godot_launcher.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.38,
+      "durationSeconds": 0.091,
+      "tail": "PASS Godot launcher: version pin + override, .cmd wrapping, ZS_NPX_PATH, per-platform Godot auto-detection, clean failure without npx, exit-code and argv passthrough, and stdout kept empty for the MCP protocol\n[godot-mcp] ZS_NPX_PATH is set but is not a file: /tmp/tmp_n32jzf7/nope\n[godot-mcp] npx was not found. Install Node.js 18+ (which includes npm/npx), or set ZS_NPX_PATH to the full path of npx.cmd, then restart the bridge.\n"
+    },
+    {
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_intent_to_product_intelligence.py",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.42,
       "tail": "PASS 6.3 intent-to-product: all tools/skills enriched; realistic shooter becomes a coherent verified vertical slice\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_keyless_local_audio.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_keyless_local_audio.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.13,
+      "durationSeconds": 0.129,
       "tail": "PASS free keyless local audio: 11 sound classes, deterministic WAV, no network or API key\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_mcp_resources.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_mcp_resources.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.259,
-      "tail": "\u001b[2m06:08:59\u001b[0m \u001b[96m[unity] launching  (/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/fake_mcp_server.py)\u001b[0m\n\u001b[2m06:08:59\u001b[0m \u001b[96m[unity] MCP server up  (1 tools advertised)\u001b[0m\nPASS MCP tools and resources transport\n"
+      "durationSeconds": 0.286,
+      "tail": "\u001b[2m19:09:17\u001b[0m \u001b[96m[unity] launching  (/usr/local/bin/python /data/multiscript/Multi-Script/tests/fake_mcp_server.py)\u001b[0m\n\u001b[2m19:09:17\u001b[0m \u001b[96m[unity] MCP server up  (1 tools advertised)\u001b[0m\nPASS MCP tools and resources transport\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_model_improvement_layer.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_media_relay.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.25,
-      "tail": "PASS model-improvement-only architecture: 800 upgraded skills, 210 direct tools, 300 virtual tools, no extra native execution surface\n"
+      "durationSeconds": 0.367,
+      "tail": "  ok  sniff() identifies type from the bytes, never from a name\n  ok  stage() accepts the allow-list and records an honest descriptor\n  ok  stage() refuses an executable wearing a .png name\n  ok  stage() refuses an oversized item with a readable message\n  ok  prepare() on an image yields exactly one pasteable image payload\n  ok  prepare() on a video without ffmpeg still succeeds (manifest-only)\n  ok  the manifest never claims a frame it does not have\n  ok  release() removes the spooled bytes; list_items() reflects it\n  ok  the spool ceiling evicts oldest-first rather than growing without bound\n  ok  the display name is sanitised and cannot traverse the filesystem\n  ok  decode_chunk() accepts a data URL and rejects garbage readably\n  ok  stats() reports the real policy and ffmpeg availability\n  ok  bridge imports the relay and registers ms_media_relay\n  ok  the /media stage -> prepare -> release route chain works\n  ok  media routes refuse bad input with a 400 and a readable message\n  ok  ms_media_relay answers stats/list/release and rejects an unknown action\n\ntest_media_relay: 17 sections passed\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_multi_engine_provider_reliability.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_model_improvement_layer.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.111,
+      "durationSeconds": 0.274,
+      "tail": "PASS model-improvement-only architecture: 800 upgraded skills, 230 direct tools, 300 virtual tools, secure companion execution surface kept separate from native tools\n"
+    },
+    {
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_multi_engine_provider_reliability.py",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.13,
       "tail": "PASS 6.2 multi-engine v3 and Arena/ChatGPT/DeepSeek reliability hardening\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_product_manifest_plugin_613.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_product_manifest_plugin_613.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.087,
-      "tail": "PASS canonical product manifest, explicit catalogue contracts, Roblox companion v6.13 diagnostics and strict no-execution boundary\n"
+      "durationSeconds": 0.09,
+      "tail": "PASS canonical product manifest, explicit catalogue contracts, Roblox companion v6.20 diagnostics and secure opt-in execution boundary\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_product_release_hardening.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_product_release_hardening.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.153,
+      "durationSeconds": 0.168,
       "tail": "PASS 6.5 release hardening: rewriting is optional while every skill/tool remains active; all catalogues carry product gates\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_roblox_companion.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_roblox_companion.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.235,
-      "tail": "PASS Roblox companion v6.13 diagnostics, bounded typed heartbeat, security boundary and live status\n"
+      "durationSeconds": 0.273,
+      "tail": "PASS Roblox companion: 24 tools, tier gating, ephemeral auth, job round-trip, heartbeat preservation, and disable\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_roblox_professional_tool_expansion.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_roblox_professional_tool_expansion.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 1.191,
-      "tail": "PASS Roblox Studio v3: 24 direct specialists, 90 virtual specialists, 199 upgraded skills, official native execution only\n"
+      "durationSeconds": 1.36,
+      "tail": "PASS Roblox Studio v3: direct/virtual/skill layers plus 24 secure opt-in companion tools\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_skill_packs.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_roblox_workflow_tools.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.229,
+      "durationSeconds": 2.232,
+      "tail": "pture succeeds\n  ok  instances were recorded\n  ok  second capture succeeds\n  ok  compare succeeds\n  ok  exactly one addition detected (got 1)\n  ok  no removals detected\n  ok  both snapshots are listed\n  ok  an unknown action raises\n  ok  unknown labels do not silently compare\n  ok  the known labels are listed to help the caller recover\n\n10. the snapshot store cannot grow without bound\n  ok  snapshots capped at 12 (have 12)\n\n11. script audit finds the mistakes that break shipped games\n  ok  one script audited\n  ok  source was readable\n  ok  high-severity findings present (got 3)\n  ok  the RemoteEvent-handler rule fired\n  ok  the LocalPlayer-on-server rule fired\n  ok  the unbounded-loop rule fired\n  ok  severities are constrained\n  ok  an audit with no targets raises rather than inventing one\n  ok  a scope discovers scripts to audit\n\n12. descriptions state the real limits\n  ok  asset scouting states it will not invent ids\n  ok  the honesty contract is stated somewhere in the tool layer\n  ok  triage tells the model to read the raw evidence\n  ok  the plan tool forbids stacking unverified changes\n  ok  self-check asks for an honest report\n\ntest_roblox_workflow_tools: 12 sections passed\n"
+    },
+    {
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_skill_packs.py",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.324,
       "tail": "PASS 100 engine skill packs, filters, recommendations, and detail\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_studio_craft_skills.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_studio_craft_skills.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.065,
+      "durationSeconds": 0.071,
       "tail": "PASS 180 senior studio craft skills across six domains\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_tool_parameter_contracts.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_tool_parameter_contracts.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.1,
-      "tail": "PASS all 210 tool schemas, every declared parameter, provider coercions, bounds, enums and studio standards\n"
+      "durationSeconds": 0.153,
+      "tail": "PASS all 229 tool schemas, every declared parameter, provider coercions, bounds, enums and studio standards\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_unity_launcher.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_unity_launcher.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.038,
+      "durationSeconds": 0.055,
       "tail": "PASS Unity launcher pin and override\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_universal_capability_foundation.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_universal_capability_foundation.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 1.312,
+      "durationSeconds": 1.715,
       "tail": "PASS 6.4 universal capability foundation: every tool/skill deepened; six broad genres route to complete product meshes\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_universal_mastery_skills.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_universal_mastery_skills.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.065,
+      "durationSeconds": 0.067,
       "tail": "PASS 120 universal mastery skills across six production domains\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tests/test_virtual_tool_library.py",
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tests/test_virtual_tool_library.py",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 13.911,
+      "durationSeconds": 15.125,
       "tail": "PASS 300 virtual tools: every profile runs; matching covers Roblox UI, Unity animation, Godot shaders and Blender characters\n"
     },
     {
-      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_adaptive_creative_routing.js",
+      "command": "node /data/multiscript/Multi-Script/tests/test_adaptive_creative_routing.js",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.049,
+      "durationSeconds": 0.052,
       "tail": "PASS adaptive Auto/direct-engine/Figma/Canvas routing\n"
     },
     {
-      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_arena_direct_max_adaptive.js",
+      "command": "node /data/multiscript/Multi-Script/tests/test_arena_direct_max_adaptive.js",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 1.177,
-      "tail": "PASS Arena Direct Max model-targeted per-turn routing: Opus 5.5 default, 8 capability signals, retry idempotence, alternate model targeting, zero picker automation, Notion separation\n"
+      "durationSeconds": 0.035,
+      "tail": "SKIP Arena Direct Max adaptive routing: playwright is not installed (npm i -D playwright && npx playwright install chromium)\n"
     },
     {
-      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_arena_human_verification.js",
+      "command": "node /data/multiscript/Multi-Script/tests/test_arena_human_verification.js",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 1.473,
-      "tail": "PASS Arena human-verification gate: visible challenge pauses, manual clear resumes, hidden badge ignored, no bypass logic\n"
+      "durationSeconds": 0.037,
+      "tail": "SKIP Arena human-verification gate: playwright is not installed (npm i -D playwright && npx playwright install chromium)\n"
     },
     {
-      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_arena_roblox_json_protocol.js",
+      "command": "node /data/multiscript/Multi-Script/tests/test_arena_roblox_json_protocol.js",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.039,
+      "durationSeconds": 0.043,
       "tail": "PASS Arena Roblox JSON-only protocol: visible command chips, four live command shapes, native markup normalized\n"
     },
     {
-      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_arena_routing_off_614.js",
+      "command": "node /data/multiscript/Multi-Script/tests/test_arena_routing_off_614.js",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 1.009,
-      "tail": "PASS Arena Direct Max fully off with unchanged normal engine and engine-free startup\n"
+      "durationSeconds": 0.037,
+      "tail": "SKIP Arena Direct Max off mode: playwright is not installed (npm i -D playwright && npx playwright install chromium)\n"
     },
     {
-      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_arena_starter_profiles_and_engine_free.js",
+      "command": "node /data/multiscript/Multi-Script/tests/test_arena_starter_profiles_and_engine_free.js",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.036,
+      "durationSeconds": 0.043,
       "tail": "PASS Arena model-targeted Direct Max starter profiles and Roblox/Unity/Godot/Blender/engine-free startup\n"
     },
     {
-      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_cross_provider_tool_matrix.js",
+      "command": "node /data/multiscript/Multi-Script/tests/test_arena_verification_detection.js",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.1,
-      "tail": "PASS cross-provider tool matrix: 210 built-ins + 4 namespaced MCP probes across 9 AI websites (7596 command envelopes)\n"
+      "durationSeconds": 0.049,
+      "tail": "PASS Arena bot-check detection (headless): clean page, hidden badge, size/viewport gates, 13 challenge widgets + 4 interstitial wordings detected, 4 false-positive guards, no bypass implementation\n"
     },
     {
-      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_engine_tool_routing.js",
+      "command": "node /data/multiscript/Multi-Script/tests/test_claude_provider_setup.js",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.033,
+      "durationSeconds": 0.045,
+      "tail": "PASS PlazCode-derived Claude provider integrated under Multi-Script with all universal settings and no IDE code\n"
+    },
+    {
+      "command": "node /data/multiscript/Multi-Script/tests/test_content_script_load_contract.js",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.33,
+      "tail": ",\"th\":0,\"rp\":0,\"gen\":false,\"run\":false}\n[zeroscript] Multi-Script content script ready (provider: glm)\n[zs-diag] 19:09:40.241 imageTool.loaded {\"tools\":[],\"th\":0,\"rp\":0,\"gen\":false,\"run\":false}\n[zeroscript] Multi-Script content script ready (provider: arena)\n[zs-diag] 19:09:40.271 imageTool.loaded {\"tools\":[],\"th\":0,\"rp\":0,\"gen\":true,\"run\":false}\n[zeroscript] Multi-Script content script ready (provider: meta)\n[zs-diag] 19:09:40.300 imageTool.loaded {\"tools\":[],\"th\":0,\"rp\":0,\"gen\":true,\"run\":false}\n[zeroscript] Multi-Script content script ready (provider: qwen)\n[zs-diag] 19:09:40.324 imageTool.loaded {\"tools\":[],\"th\":0,\"rp\":0,\"gen\":false,\"run\":false}\n[zeroscript] Multi-Script content script ready (provider: notion)\n  ok  every content_scripts block loads in one shared scope (no TDZ / no throw)\n  ok  the harness actually detects a top-level TDZ violation (guard is not vacuous)\n  ok  core/main.js binds no top-level A.<field> before `const A = {`\n  ok  A literal declares verifyState and verifyCount\n  ok  any block loading core/main.js also loads core/verification.js\n  ok  core/verification.js defines ZSVerify in one evaluated scope\n\ntest_content_script_load_contract: 6 sections passed\n"
+    },
+    {
+      "command": "node /data/multiscript/Multi-Script/tests/test_cross_provider_tool_matrix.js",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.099,
+      "tail": "PASS cross-provider tool matrix: 230 built-ins + 4 namespaced MCP probes across 10 AI websites (9240 command envelopes)\n"
+    },
+    {
+      "command": "node /data/multiscript/Multi-Script/tests/test_engine_registry_integrity.js",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.064,
+      "tail": "  ok  every action-dispatch owner is a real tool in its engine\n  ok  dispatch:true <=> the tool has an action vocabulary\n  ok  every template parses as JSON and matches its tool command\n  ok  a dispatch template carries a real action of that tool\n  ok  every native tool ships a required-shape template\n  ok  Roblox studio_id scoping is consistent in both directions\n  ok  code payloads in templates round-trip byte-for-byte\n  ok  no template contains a raw newline inside a JSON value\n  ok  no duplicate keys in the template / note registries\n  ok  Roblox global tools are declared and are not place-scoped\n\ntest_engine_registry_integrity: 10 sections passed\n"
+    },
+    {
+      "command": "node /data/multiscript/Multi-Script/tests/test_engine_tool_layer.js",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.052,
+      "tail": "PASS non-Roblox engine command layer: 14 verified Godot tools + exact params, 33 Unity tools with 132 actions and dispatch integrity, action repair (unambiguous/ambiguous/unknown/never-mangles-Roblox), engine-aware prompt for 5 engine combinations, JSON transport unchanged for Roblox\n"
+    },
+    {
+      "command": "node /data/multiscript/Multi-Script/tests/test_engine_tool_routing.js",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.039,
       "tail": "PASS exact engine tool routing: unique, collision, server hint and rejection\n"
     },
     {
-      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_extension_stress.js",
+      "command": "node /data/multiscript/Multi-Script/tests/test_error_recovery.js",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.128,
-      "tail": "PASS extension stress: 5000 malformed parser cases, 1000 command roundtrips, 9 provider contracts\n"
+      "durationSeconds": 0.037,
+      "tail": "PASS error recovery policy: off/standard/persistent, escalating backoff, per-failure + consecutive budgets, parse + send + verification branches, widened persistent budgets, sanitised settings\n"
     },
     {
-      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_menu_settings_scope.js",
+      "command": "node /data/multiscript/Multi-Script/tests/test_extension_stress.js",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.141,
+      "tail": "PASS extension stress: 5000 malformed parser cases, 1000 command roundtrips, 10 provider contracts\n"
+    },
+    {
+      "command": "node /data/multiscript/Multi-Script/tests/test_media_relay_js.js",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.052,
+      "tail": "  ok  an unsupported or oversized file is refused before it is uploaded\n  ok  relayFile maps the bridge response into the providers payload shape\n  ok  the bytes shipped to the bridge are the bytes read from the file\n  ok  a video that yields no frames is reported honestly\n  ok  a dead bridge surfaces as an actionable sentence\n  ok  a bridge-side refusal is forwarded verbatim\n  ok  the manifest is additive and never replaces the user words\n  ok  settings default safely and the port override is validated\n  ok  stats() degrades gracefully against a dead bridge\n  ok  release() is best-effort and never throws\n  ok  the module and the bridge agree on routes, loopback and caps\n\ntest_media_relay_js: 11 sections passed\n"
+    },
+    {
+      "command": "node /data/multiscript/Multi-Script/tests/test_menu_settings_scope.js",
       "passed": true,
       "returnCode": 0,
       "durationSeconds": 0.038,
       "tail": "PASS 6.6 all menu settings validated/diagnosed; broad provider+MCP scope; no access-control bypass\n"
     },
     {
-      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_notion_always_on.js",
-      "passed": true,
-      "returnCode": 0,
-      "durationSeconds": 1.034,
-      "tail": "PASS Notion always-on: ai/so/com domains, shadow editor, open-chat action, persistent bar and one-click reinjection\n"
-    },
-    {
-      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_notion_bootstrap_once.js",
-      "passed": true,
-      "returnCode": 0,
-      "durationSeconds": 0.036,
-      "tail": "PASS one Notion bootstrap per chat and next-chat profile lifecycle\n"
-    },
-    {
-      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_notion_dom.js",
-      "passed": true,
-      "returnCode": 0,
-      "durationSeconds": 1.141,
-      "tail": "PASS Notion DOM selection, messages, send, lock, self-test, and new-chat identity\n"
-    },
-    {
-      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_notion_model_switching.js",
-      "passed": true,
-      "returnCode": 0,
-      "durationSeconds": 0.042,
-      "tail": "PASS prompt-only real-model requests followed by shared Multi-Script system\n"
-    },
-    {
-      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_notion_profiles.js",
-      "passed": true,
-      "returnCode": 0,
-      "durationSeconds": 0.042,
-      "tail": "PASS Notion Auto starter profiles\n"
-    },
-    {
-      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_notion_prompt_only_routing.js",
-      "passed": true,
-      "returnCode": 0,
-      "durationSeconds": 1.114,
-      "tail": "PASS prompt-only Notion routing: five profiles, zero direct model-picker clicks\n"
-    },
-    {
-      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_portable_settings_and_capability_floor.js",
+      "command": "node /data/multiscript/Multi-Script/tests/test_notion_always_on.js",
       "passed": true,
       "returnCode": 0,
       "durationSeconds": 0.039,
+      "tail": "SKIP Notion always-on injection: playwright is not installed (npm i -D playwright && npx playwright install chromium)\n"
+    },
+    {
+      "command": "node /data/multiscript/Multi-Script/tests/test_notion_app_chat_and_setup.js",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.044,
+      "tail": "PASS app.notion.com injection, real-chat routing, current composer detection, and complete in-settings setup tutorial\n"
+    },
+    {
+      "command": "node /data/multiscript/Multi-Script/tests/test_notion_bar_auto_width.js",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.043,
+      "tail": "PASS Notion bar auto-width: exact composer anchor, live resize tracking, and narrow-control compaction\n"
+    },
+    {
+      "command": "node /data/multiscript/Multi-Script/tests/test_notion_bootstrap_once.js",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.06,
+      "tail": "PASS one Notion bootstrap per chat and next-chat profile lifecycle\n"
+    },
+    {
+      "command": "node /data/multiscript/Multi-Script/tests/test_notion_dom.js",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.046,
+      "tail": "SKIP Notion DOM adapter: playwright is not installed (npm i -D playwright && npx playwright install chromium)\n"
+    },
+    {
+      "command": "node /data/multiscript/Multi-Script/tests/test_notion_model_switching.js",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.048,
+      "tail": "PASS prompt-only real-model requests followed by shared Multi-Script system\n"
+    },
+    {
+      "command": "node /data/multiscript/Multi-Script/tests/test_notion_profiles.js",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.038,
+      "tail": "PASS Notion Auto starter profiles\n"
+    },
+    {
+      "command": "node /data/multiscript/Multi-Script/tests/test_notion_prompt_only_routing.js",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.039,
+      "tail": "SKIP prompt-only Notion routing: playwright is not installed (npm i -D playwright && npx playwright install chromium)\n"
+    },
+    {
+      "command": "node /data/multiscript/Multi-Script/tests/test_one_shot_autonomy.js",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.043,
+      "tail": "PASS one-shot autonomy: prompt rules (no questions, no dead turns, drive the whole spec, recover silently), core wiring (pacing, bounded recovery, verification parking, settings + backup + diagnostics), and manifest load order on all 9 providers\n"
+    },
+    {
+      "command": "node /data/multiscript/Multi-Script/tests/test_pacing_engine.js",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.046,
+      "tail": "PASS reply pacing engine: off switch, 1500-4500ms band, long pause every 8, 8000ms error cooldown, per-provider overrides, sanitisation, deterministic under a seeded rng (mean 4138ms over 40 simulated sends)\n"
+    },
+    {
+      "command": "node /data/multiscript/Multi-Script/tests/test_portable_settings_and_capability_floor.js",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.041,
       "tail": "PASS 6.7 validated portable settings and provider-independent professional quality floor\n"
     },
     {
-      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_provider_behavior.js",
+      "command": "node /data/multiscript/Multi-Script/tests/test_prompt_enhancer.js",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.036,
+      "durationSeconds": 0.04,
+      "tail": "  ok  the enhancer is off by default and changes nothing when off\n  ok  the original request survives verbatim in every mode\n  ok  enhancing an already-enhanced prompt is a no-op\n  ok  the enhancer invents no specifics\n  ok  a user-supplied specific is respected, not second-guessed\n  ok  an unknown environment produces no environment block\n  ok  the added text never exceeds the level cap\n  ok  an already-detailed request is not rewritten\n  ok  intent is classified and selects the matching done-criteria\n  ok  relevant constraints are surfaced, irrelevant ones are not\n  ok  describe() reflects the real settings\n  ok  domain strategy is provider-neutral and fact toggles are real\n\ntest_prompt_enhancer: 12 sections passed\n"
+    },
+    {
+      "command": "node /data/multiscript/Multi-Script/tests/test_provider_behavior.js",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.042,
       "tail": "PASS per-provider prompt rewriting, always-on skills and production loop modes\n"
     },
     {
-      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_provider_benchmarks.js",
+      "command": "node /data/multiscript/Multi-Script/tests/test_provider_benchmarks.js",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.048,
+      "tail": "PASS eight-provider 1\u201310 benchmark dashboard excluding Arena and Notion\n"
+    },
+    {
+      "command": "node /data/multiscript/Multi-Script/tests/test_refusal_feedback.js",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.041,
+      "tail": "  ok  ZS.blockedFeedback is exported and total\n  ok  a permanently-disabled command is never described as \"timed out\"\n  ok  the vision refusal states the real limitation and a workaround\n  ok  screen_capture is not refused for image reasons when the provider supports vision\n  ok  an unknown block reason does not fabricate a timeout\n  ok  main.js delegates refusal text to the shared helper\n  ok  main.js inline fallback does not claim a timeout\n\ntest_refusal_feedback: 7 sections passed\n"
+    },
+    {
+      "command": "node /data/multiscript/Multi-Script/tests/test_required_param_contract.js",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.051,
+      "tail": "PASS required-parameter contract: every structured Roblox/Godot/Unity/Blender tool leads with a valid copyable envelope, the validator rejection names the exact nested path and shows the shape, Godot's 14 tools/params and Unity's action-dispatch repair are exact, and code payloads round-trip byte-for-byte\n"
+    },
+    {
+      "command": "node /data/multiscript/Multi-Script/tests/test_roblox_json_contract.js",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.044,
+      "tail": "PASS JSON-only transport contract: prompt + reminder rules, 7 live Roblox/Godot envelopes parsed, nested edits array and escaped quotes intact, double-envelope unwrap, engine defaults, malformed-envelope guards\n"
+    },
+    {
+      "command": "node /data/multiscript/Multi-Script/tests/test_roblox_schema_conformance.js",
       "passed": true,
       "returnCode": 0,
       "durationSeconds": 0.047,
-      "tail": "PASS seven-provider 1\u201310 benchmark dashboard excluding Arena and Notion\n"
+      "tail": "  ok  every Roblox template carries the params the server requires\n  ok  the never-guess-this-again params are the real ones\n  ok  insert_asset models assetId as a string and shows assetName\n  ok  generate_procedural_model template defaults to async\n  ok  the tool notes name the real parameter fields\n  ok  no note teaches a renamed-by-us parameter name\n\ntest_roblox_schema_conformance: 6 sections passed\n"
     },
     {
-      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_settings_customization.js",
+      "command": "node /data/multiscript/Multi-Script/tests/test_roblox_studio_id.js",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.046,
+      "tail": "PASS roblox studio_id contract: required on every place-scoped command, auto-filled when one Studio is known, refused when ambiguous, learned passively from list_roblox_studios, documented in prompt + notes + execute_luau example, and every pre-existing Roblox/Godot/Unity note intact\n"
+    },
+    {
+      "command": "node /data/multiscript/Multi-Script/tests/test_settings_customization.js",
       "passed": true,
       "returnCode": 0,
       "durationSeconds": 0.047,
       "tail": "PASS customizable settings UI and browser-secret exclusion\n"
     },
     {
-      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_skill_tool_mesh_prompt.js",
+      "command": "node /data/multiscript/Multi-Script/tests/test_skill_tool_mesh_prompt.js",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.037,
+      "durationSeconds": 0.052,
       "tail": "PASS comprehensive skill/tool mesh prompt levels\n"
     },
     {
-      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_universal_capability_visibility_615.js",
+      "command": "node /data/multiscript/Multi-Script/tests/test_theme_picker_legibility.js",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.039,
+      "durationSeconds": 0.054,
+      "tail": "PASS 6.18.0 theme picker: 8 legible multi-column options, per-theme palette chips, no ink-4 regression\n"
+    },
+    {
+      "command": "node /data/multiscript/Multi-Script/tests/test_trust_model.js",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.045,
+      "tail": "r browser.tabs.drive\n  ok  desktop.read has a human label\n  ok  matrix agrees with can() for desktop.read\n  ok  desktop.control has a human label\n  ok  matrix agrees with can() for desktop.control\n  ok  media.relay has a human label\n  ok  matrix agrees with can() for media.relay\n  ok  fs.read.any has a human label\n  ok  matrix agrees with can() for fs.read.any\n  ok  fs.write.any has a human label\n  ok  matrix agrees with can() for fs.write.any\n  ok  process.list has a human label\n  ok  matrix agrees with can() for process.list\n  ok  process.spawn has a human label\n  ok  matrix agrees with can() for process.spawn\n\n9. hard limits exist and no level can lift them\n  ok  hard limits are declared\n  ok  the exfiltration limit is stated\n  ok  the credentials limit is stated\n  ok  the URL-scheme limit is stated\n  ok  hard limits are not described as level-dependent\n\n10. each level is described honestly to the user\n  ok  sandbox has full copy\n  ok  describe() names sandbox\n  ok  ask has full copy\n  ok  describe() names ask\n  ok  full has full copy\n  ok  describe() names full\n  ok  sandbox copy says things are refused\n  ok  ask copy mentions confirmation\n\ntest_trust_model: 10 sections passed\n"
+    },
+    {
+      "command": "node /data/multiscript/Multi-Script/tests/test_universal_capability_visibility_615.js",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.044,
       "tail": "PASS all providers see direct commands, searchable skills/specialists, truthful native counts, and offline-safe discovery\n"
     },
     {
-      "command": "node /vercel/sandbox/data/project/Multi-Script/tests/test_usage_optimizer.js",
+      "command": "node /data/multiscript/Multi-Script/tests/test_universal_effort_and_enhancer_wiring.js",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 0.036,
+      "durationSeconds": 0.039,
+      "tail": "PASS universal enhancer + effort harness across 10 provider app blocks\n"
+    },
+    {
+      "command": "node /data/multiscript/Multi-Script/tests/test_usage_optimizer.js",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 0.037,
       "tail": "PASS provider-wide usage optimizer\n"
     },
     {
-      "command": "/usr/local/bin/python3 /vercel/sandbox/data/project/Multi-Script/tools/release_check.py",
+      "command": "node /data/multiscript/Multi-Script/tests/test_verification_assistant.js",
       "passed": true,
       "returnCode": 0,
-      "durationSeconds": 2.057,
-      "tail": "PASS Multi-Script 6.17.0 release check: 800 skills, 52 JavaScript files, manifest references and public docs verified\n"
+      "durationSeconds": 0.055,
+      "tail": "PASS verification assistant: no bypass anywhere, 4 honest modes, escalating slowdown that caps and decays, a single bounded click on the provider's own widget that alerts first and never reads or writes a token, and the whole path wired through manifest, provider, core, menu, backup and diagnostics\n"
+    },
+    {
+      "command": "/usr/local/bin/python /data/multiscript/Multi-Script/tools/release_check.py",
+      "passed": true,
+      "returnCode": 0,
+      "durationSeconds": 3.425,
+      "tail": "PASS Multi-Script 6.23.0 release check: 800 skills, 72 JavaScript files, manifest references and public docs verified\n"
     }
   ],
   "summary": {

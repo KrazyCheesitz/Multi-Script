@@ -1,5 +1,5 @@
 {
-  "release": "6.17.3",
+  "release": "6.24.0",
   "generatedFrom": "bundled vendor documentation, runtime schemas, exhaustive local regression suites",
   "limitations": [
     "No editor was attached in this sandbox, so engine-mutating smoke tests remain runtime gates on the user machine.",

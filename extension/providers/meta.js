@@ -340,13 +340,28 @@ const ZSProvider = (() => {
   // Réflexion-Instantané mode toggle / send). Return band [0] (the card child that
   // contains the editor) so the cover leaves the controls - and the ZS bar above -
   // uncovered and usable. Falls back to the editor if the structure changes.
-  function coverTarget() {
-    const card = barAnchor();
+  function coverTarget() {    const card = barAnchor();
     const ed = getEditor();
     if (!card || !ed) return ed;
     let n = ed;
     while (n && n.parentElement && n.parentElement !== card) n = n.parentElement;
     return (n && n.parentElement === card) ? n : ed;
+  }
+
+  // Content inset for the anchored bar. Meta's composer card is rounded-32, so
+  // the bar's ends would run under the corner arc; the inset is derived from the
+  // card's own horizontal padding (falling back to 30px, which the CSS also
+  // carries) so a Meta restyle is followed instead of silently breaking.
+  function barInset() {
+    const card = barAnchor();
+    if (!card) return null;
+    try {
+      const s = getComputedStyle(card);
+      const pl = parseFloat(s.paddingLeft) || 0;
+      const pr = parseFloat(s.paddingRight) || 0;
+      if (pl >= 4 || pr >= 4) return { left: Math.round(pl + 14), right: Math.round(pr + 14) };
+    } catch {}
+    return { left: 30, right: 30 };
   }
 
   // ── Input lock ──────────────────────────────────────────────────────────────
@@ -767,7 +782,7 @@ const ZSProvider = (() => {
     assistantCount, userCount, lastAssistant, lastAssistantId, readAssistant,
     streamLen, snapshot,
     // composer / state
-    getEditor, editorText, chatIsEmpty, isFreshChat, composerFrame, barAnchor,
+    getEditor, editorText, chatIsEmpty, isFreshChat, composerFrame, barAnchor, barInset,
     // The "Agent is working…" cover is sized to coverTarget() so it blankets the
     // whole text-entry band (blocking clicks that would otherwise focus the editor
     // and let the user type behind it) WITHOUT covering the controls row - the

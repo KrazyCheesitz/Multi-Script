@@ -3,7 +3,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 w=types.ModuleType('websockets');w.ConnectionClosed=Exception;sys.modules.setdefault('websockets',w)
 spec=importlib.util.spec_from_file_location('compat_bridge',ROOT/'runtime'/'bridge.py');b=importlib.util.module_from_spec(spec);spec.loader.exec_module(b)
-assert len(b.BUILTIN_TOOLS)==210 and 'ms_mcp_schema_audit' in b.BUILTIN_TOOL_NAMES
+assert len(b.BUILTIN_TOOLS)==230+6 and 'ms_mcp_schema_audit' in b.BUILTIN_TOOL_NAMES
 schema={
  'type':'object','additionalProperties':False,
  '$defs':{'vec':{'type':'array','minItems':3,'maxItems':3,'items':{'type':'number'}}},
@@ -53,4 +53,4 @@ out=json.loads(b._builtin_call('ms_mcp_schema_audit',{'include_low_risk':True},M
 assert out['auditedNativeTools']==2 and out['method'].startswith('static advertised-schema') and len(out['rows'])==2
 model=json.load(open(ROOT/'runtime'/'compatibility-risk-model.json'));assert model['postFixEstimatedResidualRisk']['nestedObjectParameters']<model['preFixRisk']['nestedObjectParameters']
 std=json.load(open(ROOT/'runtime'/'studio-standard.json'));assert std['version']=='12.0' and std['mcpParameterCompatibility']['liveSchemaOnly']
-print('PASS 6.9 recursive MCP schemas, strict engine binding, 800 skills, 300 virtual specialists, 210 direct tools, and risk audit')
+print('PASS 6.9 recursive MCP schemas, strict engine binding, 800 skills, 300 virtual specialists, 230 direct tools, and risk audit')

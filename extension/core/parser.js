@@ -78,7 +78,22 @@ const ZSParse = (() => {
   // itself never occurs in ordinary prose.
   const DSML_RE = /<[\s\/]*[|｜][\s|｜]*DSML[\s|｜]*[|｜]/i;
 
+  // Chat front-ends sometimes "prettify" the model's JSON: curly double quotes
+  // (“command”) or single-quoted keys ('command'). The structural quotes are then
+  // not ASCII and the call is never even detected. Fold them back - but ONLY when
+  // there is no ASCII-quoted command/tool key at all, so code inside a valid call
+  // (which may legitimately contain curly quotes in a string) is never rewritten.
+  function foldTypography(text) {
+    const t = String(text == null ? "" : text);
+    if (/"(?:command|tool)"\s*:/.test(t)) return t;
+    let out = t;
+    if (/[\u201C\u201D\u201E]\s*(?:command|tool)\s*[\u201C\u201D]/.test(out)) out = out.replace(/[\u201C\u201D\u201E]/g, '"');
+    if (/(?:^|[{,\s])'(?:command|tool)'\s*:/.test(out)) out = out.replace(/'(command|tool|params|arguments)'(\s*:)/g, '"$1"$2');
+    return out;
+  }
+
   function hasToolSignature(r) {
+    r = foldTypography(r);
     return (
       r.includes(START_M) ||
       r.includes("MCP_TOOL") ||
@@ -92,6 +107,7 @@ const ZSParse = (() => {
   // (a ###LUA### / ###MCP_TOOL### opener with no matching end marker). Used by the
   // response watcher to avoid finalizing a command that is still being streamed.
   function hasOpenToolBlock(r) {
+    r = foldTypography(r);
     if (!r) return false;
     const { pos: ls, len } = findLuaStart(r);
     if (ls !== -1 && findLuaEnd(r, ls + len) === -1) return true;
@@ -121,7 +137,11 @@ const ZSParse = (() => {
     const name = o.command != null ? o.command : (o.tool != null ? o.tool : o.name);
     let args = o.params != null ? o.params : (o.arguments != null ? o.arguments : o.args);
     if (typeof name !== "string" || !name) return null;
-    if (!args || typeof args !== "object") args = {};
+    if (typeof args === "string" && args.trim()) {
+      // Models sometimes double-encode: "params": "{\"path\": ...}".
+      try { const inner = parseLoose(args); if (inner && typeof inner === "object") args = inner; } catch {}
+    }
+    if (!args || typeof args !== "object" || Array.isArray(args)) args = {};
     return { tool: name, arguments: args };
   }
 
@@ -153,26 +173,102 @@ const ZSParse = (() => {
   // command was never executed. The fallback walks the text string-aware and
   // escapes those characters ONLY inside string literals, then re-parses.
   function parseLoose(raw) {
-    try {
-      return JSON.parse(raw);
-    } catch (e0) {
-      let out = "", inStr = false, esc = false;
-      for (const c of raw) {
-        if (inStr) {
-          if (esc) { esc = false; out += c; continue; }
-          if (c === "\\") { esc = true; out += c; continue; }
-          if (c === '"') { inStr = false; out += c; continue; }
-          if (c === "\t") { out += "\\t"; continue; }
-          if (c === "\n") { out += "\\n"; continue; }
-          if (c === "\r") { out += "\\r"; continue; }
-          out += c;
-          continue;
-        }
-        if (c === '"') inStr = true;
-        out += c;
+    // Tier 0: strict. Tier 1: raw control characters inside strings (the original
+    // fix). Tier 2: the common ways a chat model breaks JSON - smart quotes,
+    // single quotes, comments, trailing commas, unquoted keys, Python literals,
+    // invalid escapes (`\d`, `\'`). Tier 3: additionally guess which inner
+    // double quotes were meant literally. Every tier only runs when the one
+    // before it threw, so a well-formed command is never touched.
+    try { return JSON.parse(raw); } catch (e0) {
+      let last = e0;
+      for (const mode of [0, 1, 2]) {
+        try { return JSON.parse(repairJsonText(raw, mode)); } catch (e) { last = e; }
       }
-      return JSON.parse(out); // may still throw - callers catch
+      throw last;
     }
+  }
+
+  // Repair JSON-ish text into strict JSON. mode 0 = control chars only,
+  // 1 = lenient syntax, 2 = lenient syntax + inner-quote guessing.
+  function repairJsonText(raw, mode) {
+    const n = raw.length;
+    const lenient = mode >= 1, guess = mode >= 2;
+    const OPEN_DQ = new Set(['"', "\u201c", "\u201d", "\u201e", "\u00ab", "\u00bb"]);
+    const CLOSE_DQ = new Set(['"', "\u201d", "\u201c", "\u201e", "\u00bb", "\u00ab"]);
+    const nextSig = (i) => { while (i < n && /\s/.test(raw[i])) i++; return i < n ? raw[i] : ""; };
+    let out = "";
+    let i = 0;
+    while (i < n) {
+      const c = raw[i];
+      // ---- comments (outside strings only) ----
+      if (lenient && c === "/" && raw[i + 1] === "/") { while (i < n && raw[i] !== "\n") i++; continue; }
+      if (lenient && c === "/" && raw[i + 1] === "*") { const e = raw.indexOf("*/", i + 2); i = e === -1 ? n : e + 2; continue; }
+      // ---- strings ----
+      const isDq = c === '"' || (lenient && OPEN_DQ.has(c));
+      const isSq = lenient && c === "'";
+      if (isDq || isSq) {
+        const quote = c;
+        out += '"';
+        i++;
+        while (i < n) {
+          const d = raw[i];
+          if (d === "\\") {
+            const nx = raw[i + 1];
+            if (nx === undefined) { out += "\\\\"; i++; continue; }
+            if ('"\\/bfnrt'.includes(nx)) { out += d + nx; i += 2; continue; }
+            if (nx === "u" && /^[0-9a-fA-F]{4}$/.test(raw.slice(i + 2, i + 6))) { out += raw.slice(i, i + 6); i += 6; continue; }
+            if (nx === "'") { out += "'"; i += 2; continue; }
+            // Not a JSON escape (e.g. Lua/regex "\d", "\.", a Windows path): keep the backslash literally.
+            if (lenient) { out += "\\\\"; i++; continue; }
+            out += d + nx; i += 2; continue;
+          }
+          const closes = isDq ? (d === '"' || (lenient && CLOSE_DQ.has(d))) : d === "'";
+          if (closes) {
+            if (guess && isDq) {
+              // A real closing quote is followed by , } ] : or end of input.
+              const nx = nextSig(i + 1);
+              if (nx && !",}]:".includes(nx)) { out += '\\"'; i++; continue; }
+            }
+            if (isSq && lenient) {
+              const nx = nextSig(i + 1);
+              if (nx && !",}]:".includes(nx)) { out += "'"; i++; continue; }
+            }
+            out += '"';
+            i++;
+            break;
+          }
+          if (d === '"') { out += '\\"'; i++; continue; }   // a bare " inside a single-quoted string
+          if (d === "\t") { out += "\\t"; i++; continue; }
+          if (d === "\n") { out += "\\n"; i++; continue; }
+          if (d === "\r") { out += "\\r"; i++; continue; }
+          if (d < " ") { out += "\\u" + d.charCodeAt(0).toString(16).padStart(4, "0"); i++; continue; }
+          out += d;
+          i++;
+        }
+        continue;
+      }
+      if (lenient) {
+        // trailing comma: ,  followed by } or ]
+        if (c === ",") {
+          const nx = nextSig(i + 1);
+          if (nx === "}" || nx === "]") { i++; continue; }
+        }
+        // bare words: unquoted keys and Python/JS literals
+        if (/[A-Za-z_$]/.test(c)) {
+          let j = i;
+          while (j < n && /[A-Za-z0-9_$]/.test(raw[j])) j++;
+          const word = raw.slice(i, j);
+          const nx = nextSig(j);
+          if (nx === ":") { out += JSON.stringify(word); i = j; continue; }
+          const lit = { True: "true", False: "false", None: "null", undefined: "null", NaN: "null", Infinity: "null", true: "true", false: "false", null: "null" }[word];
+          if (lit !== undefined) { out += lit; i = j; continue; }
+          out += word; i = j; continue;
+        }
+      }
+      out += c;
+      i++;
+    }
+    return out;
   }
 
   function extractJson(raw) {
@@ -253,6 +349,7 @@ const ZSParse = (() => {
   }
 
   function parseToolCalls(r) {
+    r = foldTypography(r);
     // Lowercase for case-insensitive end-marker search. Models write
     // ###end_mcp_tool### (underscore) or ###end-mcp_tool### (dash).
     const rLow = r.toLowerCase();
@@ -421,7 +518,7 @@ const ZSParse = (() => {
 
   return {
     START_M, END_M, LUA_START_RE, LUA_END_RE, CMD_KEY_RE, DSML_RE,
-    findLuaStart, findLuaEnd, matchBrace, extractJson, normalizeCall, parseNativeToolMarkup,
+    findLuaStart, findLuaEnd, matchBrace, parseLoose, repairJsonText, extractJson, normalizeCall, parseNativeToolMarkup,
     hasToolSignature, hasOpenToolBlock, parseToolCalls, salvageCutOff, toolNameFromText,
     isInjectedFeedback, hasCommandShape,
   };

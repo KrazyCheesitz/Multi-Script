@@ -99,6 +99,14 @@ for (const f of ["file_path", "old_string", "new_string"]) {
 }
 ok(/"old_string":"(?!")/.test(meTpl) && /"new_string":"(?!")/.test(meTpl),
   "old_string and new_string must both be present as values (not omitted or null)");
+// [schema] file_path is a TOP-LEVEL multi_edit param. It shipped INSIDE the edit
+// object for several releases, so assert the nesting explicitly - a bare
+// "file_path appears somewhere" check would not catch a regression.
+const meObj = JSON.parse(meTpl.replace(/<[^>]*>/g, 'X'));
+ok(typeof meObj.params.file_path === 'string' && meObj.params.file_path.length > 0,
+  "multi_edit's file_path must be a TOP-LEVEL params field");
+ok(meObj.params.edits.every((e) => !('file_path' in e)),
+  "multi_edit's edits[] entries must NOT carry file_path (it is a params field, not an edit field)");
 // The note must still explain HOW old_string matches - the template leads, the
 // prose follows; neither replaces the other.
 const meNote = ZS.toolNote("multi_edit");

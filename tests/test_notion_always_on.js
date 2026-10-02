@@ -5,7 +5,7 @@ pw.guard(NAME);
 (async()=>{
   const manifest=JSON.parse(fs.readFileSync('extension/manifest.json','utf8'));
   const notion=manifest.content_scripts.find(x=>(x.js||[]).includes('providers/notion.js'));
-  for(const pattern of ['https://notion.ai/*','https://www.notion.ai/*','https://notion.so/*','https://www.notion.so/*','https://notion.com/*','https://www.notion.com/*']) {
+  for(const pattern of ['https://notion.ai/*','https://www.notion.ai/*','https://notion.so/*','https://www.notion.so/*','https://notion.com/*','https://www.notion.com/*','https://app.notion.com/*']) {
     if(!notion.matches.includes(pattern)||!manifest.host_permissions.includes(pattern)) throw new Error('missing '+pattern);
   }
   if(!manifest.permissions.includes('scripting')||!manifest.permissions.includes('activeTab')) throw new Error('missing repair permissions');
@@ -29,5 +29,5 @@ pw.guard(NAME);
   const main=fs.readFileSync('extension/core/main.js','utf8'), popup=fs.readFileSync('extension/popup.js','utf8');
   if(!main.includes('persistentBarWhenNoEditor')||!main.includes('zs-bar-detached')||!main.includes('open-provider')) throw new Error('missing persistent recovery UI');
   if(!popup.includes('chrome.scripting.executeScript')||!popup.includes('providers/notion.js')) throw new Error('missing popup reinjection recovery');
-  console.log('PASS Notion always-on: ai/so/com domains, shadow editor, open-chat action, persistent bar and one-click reinjection');
+  console.log('PASS Notion always-on: app.notion.com + legacy domains, shadow editor, open-chat action, persistent bar and one-click reinjection');
 })().catch(e=>{console.error(e);process.exit(1)});

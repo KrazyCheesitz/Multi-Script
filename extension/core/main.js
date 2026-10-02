@@ -18,20 +18,235 @@
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const log = (...a) => console.log("[zeroscript]", ...a);
 
-  // ── Anti-bot mitigation (EXPERIMENTAL) ──────────────────────────────────
-  // Suspected contributor to Arena's captcha: the agentic loop sends turns
-  // back-to-back with near-zero, perfectly regular delay (~200ms settle),
-  // which behavioral risk-scoring (reCAPTCHA/Cloudflare) can read as a bot
-  // signal alongside the necessarily-synthetic input events. This adds a
-  // small randomized human-reaction-time delay before each send.
-  // REVERT: flip HUMANIZE_SEND to false - single toggle, no other changes needed.
-  const HUMANIZE_SEND = false; // didn't prevent Arena's captcha (fires on turn 1 already) - revert
-  const SEND_JITTER_MS = [400, 1400]; // [min, max] ms, randomized per send
-  function jitterBeforeSend() {
-    if (!HUMANIZE_SEND) return Promise.resolve();
-    const [lo, hi] = SEND_JITTER_MS;
-    return sleep(lo + Math.random() * (hi - lo));
+  // ── Reply pacing (anti-flag) ─────────────────────────────────────────────
+  // The loop used to send turns back-to-back with a fixed ~200ms settle. That
+  // machine-perfect cadence is what behavioural risk-scoring reads as a bot
+  // signal (alongside the necessarily-synthetic input events), and it is a
+  // plausible contributor to Arena's bot-check and to silent rate limits.
+  //
+  // ZSPace (core/pacing.js) now owns the rhythm: a randomised interval inside a
+  // user-chosen band, an occasional longer break, an optional typing cadence,
+  // and a cooldown after any error or throttle so a retry storm can never
+  // deepen a limit. Pacing only ever changes WHEN a turn is sent - never what is
+  // sent - so it cannot lower correctness. Set the mode to "off" in the menu to
+  // get the original immediate behaviour back.
+  let paceSettings = ZSPace.DEFAULT_SETTINGS;
+  let resilienceSettings = ZSResilience.DEFAULT_SETTINGS;
+  let autonomyLevel = "guided";
+  // How the run behaves when a provider puts a bot-check in the way. This is an
+  // ASSISTANT, never a bypass: it pauses, gets our own overlays out of the way,
+  // can click the provider's own widget once, alerts loudly for an unattended
+  // run, and slows subsequent sends so the check stops recurring. See
+  // core/verification.js for the full reasoning and the hard limits.
+  let verificationSettings = ZSVerify.DEFAULT_SETTINGS;
+  // Live slowdown state (floorMs grows with each challenge, decays when clean)
+  // and the challenge counter live on A - declared in the A literal below.
+  // They must NOT be assigned here: `const A` is still in its temporal dead
+  // zone at this point, so touching A.anything throws ReferenceError and the
+  // whole content script dies before any UI can mount (6.17.3 regression).
+  // Live pacing bookkeeping (A.sendIndex / A.lastSendAt / A.lastErrorAt live on A).
+  const paceProfile = () => ZSPace.profileFor(paceSettings, P.id);
+  const rlevel = () => ZSResilience.levelFor(resilienceSettings, P.id);
+  const rbudgets = () => ZSResilience.budgets(rlevel());
+  const vmode = () => ZSVerify.modeFor(verificationSettings, P.id);
+  const getPaceSettings = () => paceSettings;
+  const getResilienceSettings = () => resilienceSettings;
+  const getVerificationSettings = () => verificationSettings;
+  const getAutonomyLevel = () => autonomyLevel;
+  function setPaceSettings(patch) {
+    paceSettings = ZSPace.sanitize({ ...paceSettings, ...(patch || {}) });
+    try { chrome.storage.local.set({ msPacingSettings: paceSettings }); } catch {}
+    return paceSettings;
   }
+  function setResilienceSettings(patch) {
+    resilienceSettings = ZSResilience.sanitize({ ...resilienceSettings, ...(patch || {}) });
+    try { chrome.storage.local.set({ msResilienceSettings: resilienceSettings }); } catch {}
+    return resilienceSettings;
+  }
+  function setVerificationSettings(patch) {
+    verificationSettings = ZSVerify.sanitize({ ...verificationSettings, ...(patch || {}) });
+    try { chrome.storage.local.set({ msVerificationSettings: verificationSettings }); } catch {}
+    return verificationSettings;
+  }
+  function setAutonomyLevel(level) {
+    autonomyLevel = ZS.sanitizeAutonomy ? ZS.sanitizeAutonomy(level) : (level === "oneShot" ? "oneShot" : "guided");
+    try { chrome.storage.local.set({ zsAutonomyLevel: autonomyLevel }); } catch {}
+    return autonomyLevel;
+  }
+  // ── Prompt enhancer + media relay settings ───────────────────────────────
+  // Both default OFF/ON safely: the enhancer rewrites the user's own words, so it
+  // is opt-in; the relay only acts when the user drops a file, so it is on.
+  let enhanceSettings = ZSEnhance.sanitize(null);
+  const getEnhanceSettings = () => enhanceSettings;
+  function setEnhanceSettings(patch) {
+    enhanceSettings = ZSEnhance.sanitize({ ...enhanceSettings, ...(patch || {}) });
+    try { chrome.storage.local.set({ msEnhanceSettings: enhanceSettings }); } catch {}
+    return enhanceSettings;
+  }
+  // Provider-neutral execution effort. This is an instruction-layer harness,
+  // not a hidden attempt to click a site's model/thinking controls. Every
+  // provider receives the same semantics; Notion gets the same block inside its
+  // prompt-only startup harness.
+  const EXECUTION_EFFORTS = {
+    adaptive: { label: "Adaptive", hint: "Match effort to task risk and complexity.", prompt: "Choose the lightest approach that can complete the task correctly. Escalate depth for ambiguity, broad changes, security, migrations, performance work, or failed verification." },
+    quick: { label: "Quick", hint: "Fast path for small, reversible requests.", prompt: "Use a compact execution path. Avoid optional exploration, but still inspect before editing and verify the requested outcome." },
+    standard: { label: "Standard", hint: "Balanced implementation and verification.", prompt: "Use normal implementation depth: inspect context, execute the coherent change, and run one meaningful verification pass." },
+    deep: { label: "Deep", hint: "Broader reasoning, edge cases, and stronger evidence.", prompt: "Work deeply: inspect dependencies, consider important edge cases and integration effects, test the real result, and revise defects before finishing." },
+    maximum: { label: "Maximum", hint: "Highest practical rigor for complex builds.", prompt: "Use maximum practical rigor: map dependencies, coordinate relevant specialist skills and native tools, cover failure/platform/performance concerns, run iterative verification, and finish only with concrete read-back evidence." },
+  };
+  function sanitizeExecutionEffort(value) { return EXECUTION_EFFORTS[value] ? value : "adaptive"; }
+  let executionEffort = "adaptive";
+  // ── Notion trial/credit estimator state (see core/notion-usage.js) ─────────
+  // Lives at the top level because the send loop (counts prompts) and the UI
+  // (shows the estimate) are different closures. Only Notion uses it.
+  const NU = typeof ZSNotionUsage !== "undefined" ? ZSNotionUsage : null;
+  let notionUsage = NU ? NU.defaults() : null;
+  let onNotionUsageChange = null;
+  let notionProbing = false; // true while we open Notion's own model picker on purpose
+  function saveNotionUsage(next) {
+    if (!NU) return;
+    if (next) notionUsage = NU.sanitize(next);
+    try { chrome.storage.local.set({ zsNotionUsage: notionUsage }); } catch {}
+    try { if (onNotionUsageChange) onNotionUsageChange(); } catch {}
+  }
+  // One call per message actually sent to Notion (user prompt or tool-result turn).
+  function noteNotionPrompt() {
+    if (!NU || !notionUsage || ZSProvider.id !== "notion") return;
+    saveNotionUsage(NU.recordPrompt(notionUsage, {}));
+  }
+  if (NU && ZSProvider.id === "notion") {
+    try { chrome.storage.local.get("zsNotionUsage", (r) => { if (r && r.zsNotionUsage) { notionUsage = NU.sanitize(r.zsNotionUsage); if (onNotionUsageChange) onNotionUsageChange(); } }); } catch {}
+  }
+  function setExecutionEffort(value) {
+    executionEffort = sanitizeExecutionEffort(value);
+    try { chrome.storage.local.set({ msExecutionEffort: executionEffort }); } catch {}
+    return executionEffort;
+  }
+  function executionEffortPrompt() {
+    const e = EXECUTION_EFFORTS[executionEffort] || EXECUTION_EFFORTS.adaptive;
+    return `━━━ EXECUTION EFFORT · ${e.label.toUpperCase()} ━━━\n${e.prompt}\nThis changes depth, not honesty, safety, tool availability, or the requirement to complete the real deliverable.`;
+  }
+  let mediaSettings = ZSMediaRelay.sanitizeSettings(null);
+  const getMediaSettings = () => mediaSettings;
+  function setMediaSettings(patch) {
+    mediaSettings = ZSMediaRelay.sanitizeSettings({ ...mediaSettings, ...(patch || {}) });
+    try { chrome.storage.local.set({ msMediaSettings: mediaSettings }); } catch {}
+    return mediaSettings;
+  }
+  // The last relay outcome, so the panel can tell the truth about what happened
+  // without re-uploading anything.
+  let lastRelay = null;
+  const getLastRelay = () => lastRelay;
+  function setLastRelay(v) { lastRelay = v || null; return lastRelay; }
+
+  // ── Surface vision settings ────────────────────────────────────────────
+  // Four independent grants, all defaulting on: seeing tabs, seeing windows,
+  // reading a tab's text, and typing into a tab. Splitting read from write means
+  // a cautious user can let the agent LOOK at everything while forbidding it
+  // from touching anything. sanitize() coerces every field, so a corrupt or
+  // partial stored object can never leave a malformed setting in place.
+  const SURFACE_DEFAULTS = { tabs: true, windows: true, allowRead: true, allowType: true };
+  function sanitizeSurfaceSettings(raw) {
+    const r = raw && typeof raw === "object" ? raw : {};
+    const out = {};
+    for (const k of Object.keys(SURFACE_DEFAULTS)) out[k] = r[k] === undefined ? SURFACE_DEFAULTS[k] : !!r[k];
+    return out;
+  }
+  let surfaceSettings = sanitizeSurfaceSettings(null);
+  const getSurfaceSettings = () => surfaceSettings;
+  function setSurfaceSettings(patch) {
+    surfaceSettings = sanitizeSurfaceSettings({ ...surfaceSettings, ...(patch || {}) });
+    try { chrome.storage.local.set({ msSurfaceSettings: surfaceSettings }); } catch {}
+    return surfaceSettings;
+  }
+
+  // ── Graduated trust ─────────────────────────────────────────────────────
+  // One ordered choice (sandbox < ask < full) replaces a pile of independent
+  // switches. ZSTrust owns the semantics - this is only the storage edge, and it
+  // deliberately does not re-implement sanitize(): a corrupt stored value must
+  // fall back to the MOST restrictive level, and that rule lives in one place.
+  let trustSettings = ZSTrust.sanitize(null);
+  const getTrustSettings = () => trustSettings;
+  function setTrustSettings(patch) {
+    const next = { ...trustSettings, ...(patch || {}) };
+    // Switching to the widest level requires the user to acknowledge it once.
+    if (next.level === "full" && (patch || {}).acknowledgeFull === undefined && trustSettings.level !== "full") {
+      next.acknowledgeFull = true;
+    }
+    trustSettings = ZSTrust.sanitize(next);
+    try { chrome.storage.local.set({ msTrustSettings: trustSettings }); } catch {}
+    return trustSettings;
+  }
+  // The single gate every consequential action goes through. Returns the policy
+  // decision so a caller can report a refusal honestly instead of throwing.
+  const canDo = (capability) => ZSTrust.can(trustSettings, capability);
+  const trustSummary = () => ZSTrust.describe(trustSettings);
+  try {
+    chrome.storage.local.get(["msPacingSettings", "msResilienceSettings", "zsAutonomyLevel", "msVerificationSettings", "msEnhanceSettings", "msMediaSettings", "msSurfaceSettings", "msTrustSettings", "msExecutionEffort"], (r) => {
+      if (r && r.msPacingSettings) paceSettings = ZSPace.sanitize(r.msPacingSettings);
+      if (r && r.msResilienceSettings) resilienceSettings = ZSResilience.sanitize(r.msResilienceSettings);
+      if (r && r.msVerificationSettings) verificationSettings = ZSVerify.sanitize(r.msVerificationSettings);
+      if (r && r.zsAutonomyLevel) setAutonomyLevel(r.zsAutonomyLevel);
+      if (r && r.msEnhanceSettings) enhanceSettings = ZSEnhance.sanitize(r.msEnhanceSettings);
+      if (r && r.msMediaSettings) mediaSettings = ZSMediaRelay.sanitizeSettings(r.msMediaSettings);
+      if (r && r.msSurfaceSettings) surfaceSettings = sanitizeSurfaceSettings(r.msSurfaceSettings);
+      if (r && r.msTrustSettings) trustSettings = ZSTrust.sanitize(r.msTrustSettings);
+      if (r && r.msExecutionEffort) executionEffort = sanitizeExecutionEffort(r.msExecutionEffort);
+      // Defensive: this runs asynchronously, so never let a diagnostic failure
+      // escape into an unhandled rejection if the module is torn down early.
+      try { diag("pacing.loaded", { pace: ZSPace.describe(paceSettings, P.id), recovery: ZSResilience.describe(resilienceSettings, P.id), autonomy: autonomyLevel, verification: ZSVerify.describe(verificationSettings, P.id), enhancer: ZSEnhance.describe(enhanceSettings), trust: ZSTrust.describe(trustSettings) }); } catch {}
+    });
+  } catch {}
+
+  // Sleep that a user Stop can interrupt, so a long paced wait never delays the
+  // Stop button. Returns false if we were stopped mid-wait.
+  async function paceSleep(ms) {
+    let left = Math.max(0, Math.round(ms || 0));
+    while (left > 0) {
+      if (A.stop) return false;
+      const slice = Math.min(400, left);
+      await sleep(slice);
+      left -= slice;
+    }
+    return !A.stop;
+  }
+
+  // Wait out the paced interval before a send. `reason` is diagnostic only.
+  async function paceBeforeSend(reason) {
+    const now = Date.now();
+    const plan = ZSPace.computeDelay(paceSettings, P.id, {
+      sendIndex: A.sendIndex || 0,
+      now,
+      lastSendAt: A.lastSendAt || 0,
+      lastErrorAt: A.lastErrorAt || 0,
+    });
+    // Adaptive verification slowdown: a challenge is the provider asking for
+    // less traffic, so it raises a FLOOR on the gap. This is added on top of the
+    // normal pacing rather than replacing it, so a fast user profile still gets
+    // slowed down after a check, and recovers as the stretch stays clean.
+    const vm = vmode();
+    let verifyMs = 0;
+    if (vm.adaptive) {
+      verifyMs = ZSVerify.extraDelayMs(A.verifyState, now, verificationSettings);
+      // A clean interval decays the floor back toward zero.
+      if (!verifyMs) A.verifyState = ZSVerify.noteClean(A.verifyState, now);
+    }
+    const totalMs = Math.max(plan.delayMs, verifyMs);
+    if (totalMs <= 0) return true;
+    // Surface the wait so the user can SEE the pacing working (and so a long
+    // long-pause never reads as a hang). A.pacingUntil drives the bar's text.
+    A.pacingUntil = Date.now() + totalMs;
+    A.pacingReason = verifyMs > plan.delayMs ? "verification-slowdown" : plan.reason;
+    diag("pace.wait", { ms: totalMs, reason: A.pacingReason, longPause: plan.longPause, cooldownMs: plan.cooldownMs, sendIndex: A.sendIndex || 0, verifyMs, why: reason });
+    try {
+      const ok = await paceSleep(totalMs);
+      return ok;
+    } finally {
+      A.pacingUntil = 0;
+    }
+  }
+  // The pacing engine's own preview line, shown in the menu.
+  const paceDescription = () => ZSPace.describe(paceSettings, P.id);
 
   // ── Diagnostics ───────────────────────────────────────────────────────────
   // Persistent, lightweight breadcrumb log of the agentic loop's key decisions
@@ -80,7 +295,7 @@
 
   // Ko-fi tip link.
   const KOFI_URL = "https://ko-fi.com/sebattfg";
-  // GitHub releases page - where users download the Bridge + start.bat.
+  // GitHub releases page - where users download the Bridge + Setup.bat.
   const GITHUB_URL = "https://github.com/sebattfg/ZeroScript-Free";
   // Shown in the panel instead of a static "Free" label, so a user's screenshot
   // alone tells us which build they're on for debugging. Pulled from
@@ -104,13 +319,14 @@
   const AI_SITES = [
     { name: "DeepSeek", url: "https://chat.deepseek.com/" },
     { name: "ChatGPT", url: "https://chatgpt.com/" },
+    { name: "Claude", url: "https://claude.ai/new" },
     { name: "Gemini", url: "https://gemini.google.com/app" },
     { name: "Kimi", url: "https://www.kimi.ai/" },
     { name: "GLM", url: "https://chat.z.ai/" },
     { name: "Qwen", url: "https://chat.qwen.ai/" },
     { name: "Arena", url: "https://arena.ai/text/direct" },
     { name: "Meta AI", url: "https://www.meta.ai/" },
-    { name: "Notion AI", url: "https://www.notion.so/", description: "to use it free, you need a business trial." },
+    { name: "Notion AI", url: "https://app.notion.com/chat", description: "opens the real Notion AI chat, not workspace Connectors." },
   ];
 
   const A = {
@@ -126,6 +342,11 @@
     // button OR the site's native stop. While set, the auto-resume watchdog
     // must NOT relaunch or re-run a tool from the halted turn.
     userStopped: false,
+    // lastUserText: exactly what the user typed on their most recent send,
+    // captured by the provider's send hook BEFORE the composer is cleared. The
+    // prompt enhancer reads it once, at the top of agentLoop; it is never used
+    // to rewrite anything the user can see.
+    lastUserText: "",
     // lastGenAt: timestamp of the last moment the site was actively generating.
     // The auto-resume watchdog only acts on a tool call from a RECENT live
     // generation - never on a historical turn rendered by opening/scrolling.
@@ -158,6 +379,21 @@
     toolArg: "",
     toolList: [],
     toolNames: new Set(),
+    // Verification assistant state (core/verification.js). verifyState is the
+    // live slowdown bookkeeping - floorMs grows with each challenge and decays
+    // proportionally once the provider stays clean. verifyCount is the number
+    // of challenges seen this session (surfaced in diagnostics). Declared here,
+    // never assigned before this point (see the note next to verificationSettings).
+    verifyState: ZSVerify.initialState(),
+    verifyCount: 0,
+    // Studio ids learned from Roblox's own answers (list_roblox_studios,
+    // get_studio_state, ...). Roblox's MCP requires `studio_id` on every
+    // place-scoped command; with two Studios connected an omission is a hard
+    // failure, and with one it is silently auto-selected - so we learn the id as
+    // soon as any answer mentions it and inject it when the model forgets.
+    // Empty means "not learned yet": we then tell the model to run
+    // list_roblox_studios rather than guessing a value we do not have.
+    studios: [],
     // Successful tool calls since the last command-list reminder. DeepSeek (and
     // others) can drift away from the exact command names over a long session,
     // so we re-inject the list every REMIND_TOOLS_EVERY calls (see agentLoop).
@@ -184,9 +420,47 @@
     // True while the loop is parked waiting for this tab to come back to the
     // foreground (see waitVisible/parkHidden). Drives the bar's "Paused" state.
     parked: false,
+    // True while parked waiting for the USER to clear a bot-check / human
+    // verification. Drives the bar's "Verification needed" state.
+    verifying: false,
+    // Pacing bookkeeping. sendIndex counts turns sent in this session (drives
+    // the periodic long pause), lastSendAt anchors the inter-turn gap, and
+    // lastErrorAt arms the pacing engine's error cooldown so a retry storm can
+    // never deepen a rate limit.
+    sendIndex: 0,
+    lastSendAt: 0,
+    lastErrorAt: 0,
+    pacingUntil: 0,
+    pacingReason: "",
     // Timestamp of the last successful tool-catalogue refresh (see ensureTools).
     toolsAt: 0,
   };
+
+  // Engines the bridge reports as actually connected (editor attached and the MCP
+  // server alive). Used to make the system prompt and the offline messages
+  // engine-aware: a Godot-only session must not be told that "Roblox Studio is
+  // always connected", and must not be sent looking for Roblox when something is
+  // down. Returns [] when the bridge has not reported engines yet, which keeps the
+  // legacy Roblox-first wording instead of wrongly claiming there is no engine.
+  function connectedEngineIds() {
+    const engines = (A.bridge && A.bridge.engines) || [];
+    return engines
+      .filter((e) => e && e.connected === true && e.alive !== false)
+      .map((e) => String(e.id || "").toLowerCase())
+      .filter(Boolean);
+  }
+  const engineLabel = (id) => (ZSEngine && ZSEngine.displayName ? ZSEngine.displayName(id) : id);
+
+  // The bridge-offline note names Roblox Studio because that is the usual cause.
+  // With no Roblox connected it would send the user to check the wrong thing, so
+  // name what is actually in use instead.
+  function bridgeOfflineFeedback() {
+    const ids = connectedEngineIds();
+    if (!ids.length || ids.includes("roblox")) return ZS.FEEDBACK.bridgeOffline;
+    return ZS.FEEDBACK.bridgeOffline +
+      ` In this session the engines in use are ${ids.map(engineLabel).join(", ")} - Roblox Studio is NOT one of them, ` +
+      `so do not tell the user to open Roblox Studio.`;
+  }
 
   async function waitFor(pred, timeout) {
     const t0 = Date.now();
@@ -251,6 +525,139 @@
     return parked;
   }
 
+  // ── Human verification (bot-check) handling ───────────────────────────────
+  // Some sites (Arena most often) answer an automated cadence with a Cloudflare
+  // Turnstile / hCaptcha / reCAPTCHA / Arkose challenge. Multi-Script NEVER
+  // solves, token-injects, outsources or otherwise bypasses such a challenge -
+  // that is an anti-bot protection and defeating it would be both wrong and a
+  // guaranteed ban. What the agent CAN do is behave like a well-mannered human:
+  // notice the challenge, stop typing into the composer, get its own overlays
+  // out of the way (see placeBar / inputCover, which hide while captchaPresent),
+  // tell the user exactly what to do, and then RESUME ON ITS OWN the moment the
+  // challenge clears - instead of dying with a "not run" chip.
+  //
+  // Returns true when the page is clear (or was already clear), false only when
+  // the user pressed Stop or the wait cap elapsed.
+  //
+  // The escalation ladder lives in ZSVerify: banner -> our overlays off the
+  // widget's hit area -> audible/title alert -> ONE trusted click on the
+  // provider's own widget -> re-alert. Which steps actually fire depends on the
+  // configured mode. The full wait is bounded by the longer of the recovery
+  // budget and the user's own verification wait, so an unattended run parks
+  // rather than dying.
+  async function awaitHumanVerification(reason) {
+    if (!(P.captchaPresent && P.captchaPresent())) return true;
+    const mode = vmode();
+    const cap = Math.max(rbudgets().verificationWaitMs, Number(verificationSettings.waitMs) || 0);
+    const t0 = Date.now();
+    A.verifying = true;
+    A.verifyCount = (A.verifyCount || 0) + 1;
+    // Record the challenge so the pacing floor widens: this provider is telling
+    // us the current send rate is too aggressive.
+    if (mode.adaptive) {
+      A.verifyState = ZSVerify.noteChallenge(A.verifyState, t0);
+      diag("verification.slowdown", { floorMs: A.verifyState.floorMs, streak: A.verifyState.streak });
+    }
+    const hint = P.verificationHint ? (P.verificationHint() || "") : "";
+    diag("verification.pause", { reason, capMs: cap, hint, mode: mode.id });
+    try { ui.banner("warn", ZSVerify.COPY.bannerTitle,
+      ZSVerify.COPY.bannerBody +
+      (hint ? `\n\nDetected: ${hint}` : "") +
+      (A.verifyState.floorMs ? `\n\nSpacing messages ${Math.round(A.verifyState.floorMs / 1000)}s further apart afterwards.` : "")); } catch {}
+    let applied = 0;
+    // Alert: the human may be in another tab, so make the run noticeable.
+    let alerted = false;
+    let assisted = false;
+    try {
+      while (!A.stop && Date.now() - t0 < cap) {
+        if (!P.captchaPresent()) break;
+        const elapsed = Date.now() - t0;
+        for (const step of ZSVerify.escalationActions(applied, elapsed, mode)) {
+          applied = step.atMs;
+          if (step.action === "cover") {
+            try { ui.inputCover(true); } catch {}
+          } else if (step.action === "alert" || step.action === "re-alert") {
+            if (!alerted || step.action === "re-alert") {
+              alerted = true;
+              try { verificationAlert(step.action === "re-alert", elapsed); } catch {}
+            }
+          } else if (step.action === "assist-click") {
+            if (!assisted && P.assistChallengeClick) {
+              assisted = true;
+              const r = P.assistChallengeClick();
+              diag("verification.assist_click", { clicked: !!r.clicked, reason: r.reason || "", tag: r.tag || "" });
+              if (r.clicked) { try { ui.toast(ZSVerify.COPY.assistNotice); } catch {} }
+            }
+          }
+        }
+        await sleep(700);
+      }
+    } finally {
+      A.verifying = false;
+      try { ui.inputCover(!!(A.running || A.starting)); } catch {}
+      try { clearVerificationAlert(); } catch {}
+    }
+    const cleared = !P.captchaPresent();
+    diag("verification.resume", { cleared, waitedMs: Date.now() - t0, reason, mode: mode.id, assisted });
+    if (cleared) {
+      // A cleared challenge is a fresh start for the retry budgets too: the
+      // failures that preceded it were the challenge's fault, not the model's.
+      A.lastErrorAt = 0;
+      // Mark the moment so the settle taper and the adaptive decay are measured
+      // from the clear, not from the challenge first appearing.
+      A.verifyState = { ...A.verifyState, lastAt: Date.now() };
+      try { ui.toast(ZSVerify.COPY.cleared); } catch {}
+      if (A.verifyState.floorMs && mode.adaptive) {
+        try { ui.toast(ZSVerify.COPY.slowed); } catch {}
+      }
+    } else if (!A.stop) {
+      try { ui.banner("warn", "Still waiting on verification", ZSVerify.COPY.exhausted); } catch {}
+    }
+    return cleared;
+  }
+
+  // Make a parked run noticeable from another tab: an optional short tone
+  // (WebAudio, no asset needed) plus a title prefix. Never throws - a browser
+  // with autoplay blocked must not break the wait.
+  let _verifyTitleBase = null;
+  function verificationAlert(again, elapsedMs) {
+    const s = verificationSettings || {};
+    const mine = ZSVerify.modeFor(s, P.id);
+    if (!s.audibleAlert || !mine.alert) return;
+    try {
+      if (_verifyTitleBase == null) _verifyTitleBase = document.title;
+      const mins = Math.max(1, Math.round((elapsedMs || 0) / 60000));
+      document.title = `⚠ Verification needed${again ? ` (${mins}m)` : ""} - ${_verifyTitleBase}`;
+    } catch {}
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      const ctx = new AC();
+      const now = ctx.currentTime;
+      // Two short pings, higher and slightly longer on the repeat alert so the
+      // two are distinguishable without looking at the screen.
+      const freqs = again ? [880, 1175] : [660, 880];
+      freqs.forEach((f, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = f;
+        const start = now + i * 0.18;
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(0.06, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.16);
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.start(start); osc.stop(start + 0.18);
+      });
+      setTimeout(() => { try { ctx.close(); } catch {} }, 800);
+    } catch {}
+  }
+  function clearVerificationAlert() {
+    if (_verifyTitleBase == null) return;
+    try { document.title = _verifyTitleBase; } catch {}
+    _verifyTitleBase = null;
+  }
+
   // Submit `text` as a new turn, masking the input while we type. Returns the
   // assistant-item count BEFORE the reply (waitForResponse waits beyond it).
   // Snapshot the identity of the assistant turn present BEFORE we send. Paired
@@ -300,16 +707,40 @@
       // CRITICAL: never type/send while the tab is HIDDEN. Background tabs throttle
       // rendering, which made the landed-check unreliable and caused the SAME
       // feedback to be sent several times. Send ONLY while visible.
+      // A bot-check can appear at ANY moment (Arena re-issues one mid-session).
+      // Never type into the composer while one is up: park until the user clears
+      // it, then continue the same send.
+      if (P.captchaPresent && P.captchaPresent()) {
+        diag("send.verificationGate");
+        if (!(await awaitHumanVerification("submit"))) return base;
+      }
       let tries = 0;
       let messageSent = false;
-      while (!messageSent && !landed() && tries < 4 && !A.stop) {
+      // The recovery level widens the send-retry budget: a swallowed send is the
+      // cheapest failure to recover from (no model turn is burned), so a
+      // persistent run simply tries harder before it gives up.
+      const maxSendTries = 4 + ZSResilience.policy(rlevel()).maxRetries;
+      while (!messageSent && !landed() && tries < maxSendTries && !A.stop) {
         if (document.hidden) {
           diag("send.waitVisible", { tries });
           if (!(await waitVisible()) || A.stop) break; // park (no cap) until foreground; break only on user stop
         }
-        await jitterBeforeSend();
+        // Paced, human-looking gap before the turn goes out (see ZSPace).
+        if (!(await paceBeforeSend("submit"))) break;
         diag("submit.typeAndSend", { hasImages: !!(images && images.length) });
-        await P.typeAndSend(outboundText, images);
+        // A provider's typeAndSend can legitimately refuse (Arena throws when a
+        // bot-check appears mid-send). That must never escape as an "Internal loop
+        // error" and kill the loop: treat it as a not-sent attempt, arm the error
+        // cooldown, and let the retry loop / recovery policy decide what is next.
+        try {
+          await P.typeAndSend(outboundText, images);
+        } catch (e) {
+          A.lastErrorAt = Date.now();
+          diag("send.typeAndSendError", { tries, msg: String((e && e.message) || e).slice(0, 160) });
+          if (P.captchaPresent && P.captchaPresent()) {
+            if (!(await awaitHumanVerification("send"))) return base;
+          }
+        }
         // Re-arm the pre-hide window NOW that typeAndSend has returned (the send
         // was just clicked, so our result turn is about to render). The initial
         // arm above can EXPIRE during an image upload - typeAndSend blocks ~3-6s
@@ -325,9 +756,16 @@
           if (P.editorText().trim() === "") messageSent = true;
           return messageSent || landed();
         }, 3500);
+        if (messageSent) noteNotionPrompt();
         tries++;
       }
-      if (messageSent) diag("send.cleared", { tries });
+      if (messageSent) {
+        // A turn actually left the composer: this is the anchor for the pacing
+        // gap before the NEXT turn, and it advances the long-pause counter.
+        A.lastSendAt = Date.now();
+        A.sendIndex = (A.sendIndex || 0) + 1;
+        diag("send.cleared", { tries, sendIndex: A.sendIndex });
+      }
       // All retries exhausted with NO evidence the message landed (textarea never
       // cleared, no new turn). Silently returning here left the loop waiting for
       // a reply that will never come (~60s "empty" timeout) with zero explanation
@@ -335,10 +773,18 @@
       // the user what actually happened so they can nudge the conversation
       // themselves instead of watching a stuck bar.
       if (!messageSent && !landed() && !A.stop) {
-        diag("send.failed", { tries });
+        // Arm the pacing engine's error cooldown so the NEXT attempt (the loop's
+        // recovery resend, or the user's own nudge) waits a beat instead of
+        // hammering a composer that just refused us.
+        A.lastErrorAt = Date.now();
+        const lvl = ZSResilience.policy(rlevel());
+        diag("send.failed", { tries, recovery: lvl.label, maxSendTries });
         ui.banner("warn", "Message could not be sent",
           `${P.displayName} did not accept the injected message after ${tries} attempts. ` +
-          `Send a short message yourself (e.g. "continue") to resume the agent.`);
+          (lvl.maxRetries > 0
+            ? `Recovery is on (${lvl.label}) - the agent will retry after a short cooldown. `
+            : ``) +
+          `If it stays stuck, send a short message yourself (e.g. "continue") to resume the agent.`);
       }
       return base;
     } finally {
@@ -404,8 +850,15 @@
     let reasonSince = 0; // reasoning written but no answer yet (loading phase)
     let noTurnSince = 0; // finalize attempted before this send's reply turn exists
     let unsettledSince = 0; // command-shaped reply whose read is not yet stable
-    const WARMUP_MS = T.WARMUP_MS;
-    const REASON_NOREPLY_MS = T.REASON_NOREPLY_MS;
+    // Patience windows. The provider's calibrated base (T) is the floor; the
+    // recovery level may WIDEN them, because a persistent/unattended run would
+    // rather wait another minute for a slow engine than declare a dead turn and
+    // burn a retry. Never narrowed - a fast session keeps its tight timings.
+    const RB = rbudgets();
+    const WARMUP_MS = Math.max(T.WARMUP_MS, RB.warmupMs);
+    const REASON_NOREPLY_MS = Math.max(T.REASON_NOREPLY_MS, RB.reasonNoReplyMs);
+    const PRE_START_SILENT_MS = RB.preStartSilentMs;
+    const OPEN_BLOCK_GRACE_MS = RB.openBlockGraceMs;
     const NO_TURN_GRACE_MS = 30000;
     // Upper bound on holding off a parse verdict while a provider reports its
     // read is unsettled (Qwen A/B dual turn still landing). A genuinely stuck
@@ -493,7 +946,7 @@
           // diag: WHICH empty-branch fired matters - a dead post-regenerate turn
           // on Qwen kept ending "empty" with a complete command in the net tap,
           // and without the branch name the cause was unfindable from the log.
-          if (Date.now() - preStartSilent > 60000) { diag("empty.why", { branch: "preStart", rep: (d.reply||"").length }); return { kind: "empty" }; }
+          if (Date.now() - preStartSilent > PRE_START_SILENT_MS) { diag("empty.why", { branch: "preStart", rep: (d.reply||"").length }); return { kind: "empty" }; }
           await sleep(200);
           continue;
         }
@@ -524,7 +977,7 @@
 
       // Keep waiting while a tool command is still being streamed (opener written
       // but no end marker yet) so we never parse/finalize half a command.
-      const blockActive = ZSParse.hasOpenToolBlock(d.reply) && Date.now() - lastChangeAt < 6000;
+      const blockActive = ZSParse.hasOpenToolBlock(d.reply) && Date.now() - lastChangeAt < OPEN_BLOCK_GRACE_MS;
       // ...but once generation has clearly stopped (stop indicator gone past the
       // grace window), stop honoring an "open block" - it is DOM churn, not live
       // streaming. Lets a finished big block finalise in seconds instead of
@@ -619,6 +1072,19 @@
       // messages; gating on a short reply stops the model's own long output
       // (which may quote those phrases) from tripping them.
       if (r.length < 400 && P.isTooLongMsg(r)) return { kind: "too_long" };
+      // The SITE reporting a transient outage ("server is busy", "please try
+      // again") is NOT the model's answer. This used to fall through to
+      // kind:"text" and end the loop as a normal terminal turn, which killed an
+      // unattended run on a one-second hiccup - the commonest real failure on
+      // DeepSeek at peak hours. Classify it as a recoverable "busy" instead.
+      // Gates, so a normal answer that merely TELLS THE USER to try again is not
+      // mistaken for a site outage: it must be SHORT, must not carry a command,
+      // must not be our own injected feedback shape, and must match the
+      // provider's own site-error phrasing (see providers/*.js RE.busy).
+      if (r.length < 260 && P.isBusyMsg && P.isBusyMsg(r) &&
+          !ZSParse.hasToolSignature(r) && !ZSParse.isInjectedFeedback(r)) {
+        return { kind: "busy", text: r, item: d.item };
+      }
       // Hold off on any "unparseable command" verdict while the provider reports
       // this turn's text is not yet a settled read. Qwen's A/B "dual" turn is the
       // case: its network tap flips `done` the instant the SSE ends, but the
@@ -737,13 +1203,13 @@
         diag("cmd.wrongKey", { name: wk, known: hit, catalogue: A.toolNames.size });
         if (hit) return { kind: "parse_error", reason: "toolKey", raw: r, item: d.item };
       }
-      // NOTE: a site "server busy / something went wrong" notice is deliberately
-      // NOT special-cased. It falls through to kind:"text" below and simply ENDS
-      // the loop as a final answer - no auto-retry. Retrying risked an infinite
-      // re-answer loop when the model's OWN prose said "try again", and treating
-      // busy as a normal terminal turn is cleaner: the user just re-sends if the
-      // site actually hiccuped. (P.isBusyMsg stays on the provider interface,
-      // unused by the core, in case a future flow wants it.)
+      // NOTE: a site "server busy / something went wrong" notice IS now handled -
+      // see the kind:"busy" classification above, which routes it through the
+      // bounded recovery policy instead of ending the run. It used to fall
+      // through to kind:"text" and simply END the loop as a final answer, on the
+      // reasoning that retrying risked an infinite re-answer loop; the recovery
+      // policy removes that risk (one retry, then stop), so the safer behaviour
+      // for an unattended run is now to retry once.
       // The site caps output length and shows a native "Continue" button when it
       // truncates. We try clicking it directly (same turn) in the loop.
       if (P.findContinueBtn()) return { kind: "truncated", text: r, item: d.item };
@@ -763,7 +1229,7 @@
   // "Extension context invalidated".
   //
   // This must be told apart from a real bridge outage. They are opposite
-  // problems with opposite fixes: a bridge outage is fixed by start.bat and
+  // problems with opposite fixes: a bridge outage is fixed by the terminal icon and
   // resolves itself, while this one can ONLY be fixed by reloading the page and
   // never recovers on its own. Lumping them together (the old behaviour) told
   // the model "the local Multi-Script bridge is unreachable", which sent the user
@@ -803,7 +1269,13 @@
   // any tool result carrying images is caught generically at the point results
   // are handled (see the `r.images.length` branch) and turned into a plain
   // error on non-vision providers, so nothing needs to be predicted here.
-  const ALWAYS_BLOCKED_TOOLS = new Set(["subagent"]);
+  // Commands Multi-Script refuses outright. `subagent` is permanently disabled
+  // (it is not routed here). The set is shared with core/config.js so the block
+  // list and the refusal TEXT cannot drift apart - that drift is what produced
+  // the old, false "it timed out" message for a command that never had a chance.
+  const ALWAYS_BLOCKED_TOOLS = (ZS.PERMANENTLY_BLOCKED instanceof Set)
+    ? ZS.PERMANENTLY_BLOCKED
+    : new Set(["subagent"]);
   const VISION_TOOLS = new Set(["screen_capture"]);
   const bareToolName = (name) => (name && name.includes("/") ? name.split("/").pop() : name) || "";
   // Is `name` a tool we actually have? The bridge ADVERTISES names that may carry
@@ -881,10 +1353,113 @@
     return A.toolList;
   }
 
-  async function runTool(call) {
-    const name = call.tool;
-    const args = call.arguments || {};
+  // ms_surface_list is answered by TWO processes: the bridge enumerates desktop
+  // windows, the service worker enumerates browser tabs. Neither alone is a
+  // useful answer to "what do I have open?", so we merge them into one payload
+  // the model can reason about in a single step. Failure of either half degrades
+  // that half to empty WITH an explicit note - never a silent blank that reads
+  // as "nothing is open".
+  function mergeSurfaceList(winHalf, tabHalf) {
+    const out = { ok: true, tabs: [], tabCount: 0, windows: [], windowCount: 0, notes: [] };
+    // Bridge half: { ok:true, text:"<json>" } where text is the JSON payload.
+    if (winHalf && winHalf.ok !== false && typeof winHalf.text === "string") {
+      try {
+        const parsed = JSON.parse(winHalf.text);
+        out.windows = Array.isArray(parsed.windows) ? parsed.windows : [];
+        out.windowCount = typeof parsed.windowCount === "number" ? parsed.windowCount : out.windows.length;
+        out.degraded = !!parsed.degraded;
+        if (parsed.capabilities) out.capabilities = parsed.capabilities;
+      } catch (_) {
+        out.notes.push("The desktop-window half could not be parsed.");
+      }
+    } else {
+      out.notes.push("Desktop windows are unavailable (the local bridge is not answering).");
+    }
+    // Extension half: the worker's surfaceList() reply, already plain JSON.
+    if (tabHalf && tabHalf.ok !== false) {
+      out.tabs = Array.isArray(tabHalf.tabs) ? tabHalf.tabs : [];
+      out.tabCount = typeof tabHalf.count === "number" ? tabHalf.count : out.tabs.length;
+      out.activeTabId = tabHalf.activeTabId === undefined ? null : tabHalf.activeTabId;
+    } else {
+      out.notes.push("Browser tabs are unavailable (the extension worker did not answer).");
+    }
+    out.note = "Tabs are addressed by integer tab_id; windows are addressed by handle or pid. Call ms_surface_read for a tab's text, ms_app_read_window for a window's text.";
+    return { ok: true, text: JSON.stringify(out, null, 2) };
+  }
+
+  async function runTool(call, _depth = 0) {
+    // JSON-ONLY robustness: models occasionally DOUBLE-WRAP the envelope, e.g.
+    // {"command":"execute_luau","params":{"command":"execute_luau","params":{…}}}
+    // or nest the real call one level down. The intent is unmistakable, so unwrap
+    // (bounded, so a pathological payload can never recurse) instead of refusing
+    // a call the model clearly meant to make.
+    if (_depth < 3 && call && call.arguments && typeof call.arguments === "object" &&
+        typeof call.arguments.command === "string" &&
+        call.arguments.params && typeof call.arguments.params === "object") {
+      diag("tool.unwrapEnvelope", { outer: call.tool, inner: call.arguments.command, depth: _depth });
+      return runTool({ tool: call.arguments.command, arguments: call.arguments.params }, _depth + 1);
+    }
+    let name = call.tool;
+    let args = call.arguments || {};
     if (!name) return ZS.FEEDBACK.parseError("malformed");
+    // ── Action-dispatch repair (Unity and any engine built the same way) ─────
+    // Roblox Studio exposes one tool per action, so a model that has just worked
+    // on Roblox writes the ACTION where the TOOL belongs: {"command":"get_hierarchy"}.
+    // In an action-dispatch engine that name is not a tool at all, and the old code
+    // answered "unknown command" - which reads to the model as "this engine cannot
+    // do that" and derails the whole task. If the name is a known action of exactly
+    // ONE advertised tool, rewrite the call in place. If several tools own it the
+    // call is genuinely ambiguous and we refuse rather than guess.
+    if (typeof ZSEngine !== "undefined" && ZSEngine.resolveAction) {
+      const fix = ZSEngine.resolveAction(name, args, (n) => knownTool(n));
+      if (fix.ok) {
+        diag("tool.actionRepair", { from: name, to: fix.tool, action: fix.action });
+        ui.toast(`'${name}' is a ${engineLabel(ZSEngine.engineOfTool(fix.tool))} action - running ${fix.tool}`);
+        name = fix.tool;
+        args = fix.params;
+      } else if (fix.reason === "ambiguous") {
+        return `ERROR: '${name}' is an ACTION, not a command, and ${fix.candidates.length} tools accept it: ` +
+          `${fix.candidates.join(", ")}. Write the TOOL as "command" and the action inside params.action, e.g. ` +
+          `{"command":"${fix.candidates[0]}","params":{"action":"${name}", ...}} - pick the tool that matches what you are trying to do.`;
+      }
+    }
+    // An action-dispatch tool whose schema REQUIRES params.action, called without
+    // one, can only be a mistake - the server cannot guess the operation. Say which
+    // actions exist instead of forwarding a call that returns a vague failure.
+    if (typeof ZSEngine !== "undefined" && ZSEngine.toolSpec) {
+      const spec = ZSEngine.toolSpec(name);
+      if (spec && spec.dispatch && Array.isArray(spec.req) && spec.req.includes("action") && !args.action) {
+        const acts = ZSEngine.actionsOf(name);
+        return `ERROR: '${name}' needs params.action - it is ONE tool that performs many operations. ` +
+          `Valid actions: ${acts.join(", ") || "(see list_commands)"}. ` +
+          `Example: {"command":"${name}","params":{"action":"${acts[0] || "get"}", ...}}`;
+      }
+    }
+    // ── Roblox studio_id fill-in ────────────────────────────────────────────
+    // Roblox's Studio MCP requires `studio_id` on every place-scoped command.
+    // With exactly ONE Studio open the proxy silently auto-selects it and the
+    // omission looks harmless; with TWO or more connected every such command is
+    // rejected outright ("parameters.studio_id is required" - recorded in this
+    // repo's own bridge_debug.log). So when the model forgets it we fill it in
+    // from the id we have learned, and when we CANNOT (nothing learned yet, or
+    // several Studios and no way to tell which) we say so plainly and name the
+    // fix instead of forwarding a call we know will fail.
+    if (typeof ZSEngine !== "undefined" && ZSEngine.withStudioId) {
+      const fill = ZSEngine.withStudioId(name, args, A.studios);
+      if (fill.applied) {
+        args = fill.params;
+        diag("tool.studioId", { name, studioId: fill.studioId, source: "learned" });
+      } else if (fill.reason === "ambiguous" || fill.reason === "none-known") {
+        return ZS.FEEDBACK.studioId(name, "(no studio_id was supplied)",
+          A.studios.map((s) => s.id),
+          fill.reason === "ambiguous" ? fill.candidates : []);
+      }
+    }
+    const capabilityCounts = () => ({
+      direct: A.toolList.filter((t) => t.server === "zeroscript").length,
+      skills: Number((A.bridge && A.bridge.skills) || 800),
+      virtual: Number((A.bridge && A.bridge.virtualTools) || 300),
+    });
     // NEVER execute while the AI tab is backgrounded/minimized. This is the single
     // choke point for ALL execution (agentLoop's tool dispatch AND the bootstrap's
     // list_commands), so it closes the hole the loop-entry gate alone left open:
@@ -902,12 +1477,35 @@
     }
     // Blocked commands: refuse up-front with a clear, tailored error so the
     // model abandons it and continues instead of wasting/hanging a turn.
+    //
+    // The message must be TRUE for the reason it is blocked. The old fallback
+    // told the model a permanently-disabled command "timed out", which is a lie:
+    // it implies a retry might succeed, so the model burned turns retrying
+    // `subagent` instead of routing around it. Three distinct reasons now get
+    // three distinct, accurate messages (see core/config.js ZS.blockedFeedback).
     const bareName = bareToolName(name);
     if (isBlockedTool(name)) {
+      if (ZS.blockedFeedback) return ZS.blockedFeedback(bareName, P);
+      // Fallback kept only so a stale config.js cannot make this a hard crash.
       if (VISION_TOOLS.has(bareName)) {
         return `ERROR: '${bareName}' is unavailable here - this assistant cannot see images. Do NOT call it again. Inspect the place programmatically instead (e.g. inspect_instance, get_studio_state, search_game_tree, script_read).`;
       }
-      return `ERROR: the '${bareName}' command timed out and is unavailable in this environment. Do NOT call it again - complete the task yourself using the other commands (execute_luau, multi_edit, etc.).`;
+      return `ERROR: the '${bareName}' command is not available in this environment. Do NOT call it again - complete the task yourself using the other commands (execute_luau, multi_edit, etc.).`;
+    }
+    // First-class product capability index. This is deliberately compact and
+    // appears before giant schemas so every provider sees the real Multi-Script
+    // layer even when its context window truncates a long native catalogue.
+    if (name === "list_multiscript_capabilities") {
+      await ensureTools();
+      const c = capabilityCounts();
+      const servers = ((A.bridge && A.bridge.servers) || []).map((x) => ({ id:x.id, alive:!!x.alive, nativeTools:x.tools || 0 }));
+      return `Output of 'list_multiscript_capabilities':
+Multi-Script callable capability layer:
+- ${c.direct} direct commands (server id: multiscript; callable through the local bridge)
+- ${c.skills} reusable skills (discover with ms_list_skills / ms_recommend_skills; load with ms_get_skill)
+- ${c.virtual} internal engine specialists (discover with ms_list_virtual_tools; coordinate with ms_studio_director)
+- Native MCP servers: ${servers.map((x)=>`${x.id}=${x.nativeTools}${x.alive?" live":" offline"}`).join(", ") || "none"}
+Use list_commands {"server":"multiscript"} for every direct command schema. For a real task, call ms_studio_director first so the relevant direct tools, skills, and specialists are selected without dumping all catalogues into context.`;
     }
     // Virtual command: list the MCP server(s) Multi-Script is currently connected
     // to, with each one's REAL per-server health (from the bridge, never the
@@ -923,10 +1521,12 @@
             return `- ${sv.id}: ${label} - ${sv.alive ? `${sv.tools || 0} commands available; ${connection}` : "offline (no tools)"}`;
           })
         : ["- roblox: Roblox Studio (primary) - unknown (bridge did not report server health)"];
+      const c = capabilityCounts();
+      const capabilityLine = `- multiscript: ${c.direct} direct commands + ${c.skills} skills + ${c.virtual} internal specialists - always available through the bridge`;
       return (
         `Output of 'list_mcp_servers':\n` +
-        `Connected MCP servers (${lines.length}):\n${lines.join("\n")}\n` +
-        `Use list_commands with a "server" param (one of the ids above) to see that server's exact commands. Without "server", list_commands defaults to "roblox".`
+        `Capability sources (${lines.length + 1}):\n${capabilityLine}\n${lines.join("\n")}\n` +
+        `Native engine counts above are controlled by each MCP server and are NOT the whole product. Use list_commands {"server":"multiscript"} for Multi-Script direct schemas, list_multiscript_capabilities for the compact index, or list_commands with an engine id for native schemas.`
       );
     }
     // Virtual command: list available commands with full details. Defaults to
@@ -936,8 +1536,10 @@
       await ensureTools();
       const explicitServer = String(args.server || "").trim();
       const detected = ((A.bridge && A.bridge.engines) || []).filter((e) => e.connected === true && e.alive);
-      const requestedIds = explicitServer ? [explicitServer] : (detected.length ? detected.map((e) => e.id) : ["roblox"]);
-      const requested = requestedIds.join(" + ");
+      const allServerIds = [...new Set(A.toolList.map((t)=>t.server).filter((x)=>x && x!=="zeroscript"))];
+      const requestedIds = explicitServer === "multiscript" ? ["zeroscript"] : explicitServer === "all" ? allServerIds : explicitServer ? [explicitServer] : (detected.length ? detected.map((e) => e.id) : ["roblox"]);
+      const requested = explicitServer === "multiscript" ? "Multi-Script" : explicitServer === "all" ? "all connected sources" : requestedIds.join(" + ");
+      const offlineServerIds = new Set();
       // The MCP proxy keeps advertising Roblox's catalogue even with no Studio
       // attached, so list_commands would hand back the full command list and read
       // as "Roblox is fine" - then every command silently fails. When Roblox is
@@ -955,7 +1557,8 @@
           const otherStr = others.length
             ? `Other connected MCP server(s): ${others.map((x) => x.id).join(", ")}. Call list_mcp_servers, then list_commands with a "server" param to use them for anything that does not need Roblox.`
             : `No other MCP server is connected right now.`;
-          return `Output of '${name}':\nRoblox Studio is currently OFFLINE (closed, no place open, or its MCP server disabled), so its commands cannot run. This is an environment problem on the user's machine, not your mistake. Tell the user in one short sentence to open their place in Roblox Studio and enable its MCP server. ${otherStr}`;
+          offlineServerIds.add("roblox");
+          diag("commands.nativeOffline", { server:"roblox", alternatives:others.map((x)=>x.id) });
         }
       }
       const known = new Set(A.toolList.map((t) => t.server).filter(Boolean));
@@ -966,7 +1569,7 @@
       // so include them beside the requested server's own catalogue.
       const scoped = A.toolList.filter((t) => {
         const server = t.server || "roblox";
-        return requestedIds.includes(server) || server === "zeroscript";
+        return server === "zeroscript" || (requestedIds.includes(server) && !offlineServerIds.has(server));
       });
       if (!A.toolList.length) return `Output of '${name}':\nNo commands available - the bridge or Roblox Studio may be offline.`;
       if (!scoped.length) {
@@ -1003,11 +1606,17 @@
         const paramLines = [compact.length ? `    ${compact.join(", ")}` : "", ...detailed].filter(Boolean).join("\n");
         // Tested usage note for the error-prone commands - kept full-length
         // (these are validated fixes for real bugs, not filler).
-        const note = ZS.TOOL_NOTES[bareToolName(t.name)];
+        // Tested usage note for the command - the Roblox notes, or the engine
+        // registry's notes for Godot/Unity/Blender/other (see ZS.toolNote).
+        const note = ZS.toolNote ? ZS.toolNote(bareToolName(t.name)) : ZS.TOOL_NOTES[bareToolName(t.name)];
         const noteStr = note ? `\n    ⚠ ${note}` : "";
         return `${t.name}: ${(t.description || "").split("\n")[0]}${paramLines ? "\n" + paramLines : ""}${noteStr}`;
       });
-      return `Output of '${name}':\n${requested} commands (${scoped.length}):\n\n${lines.join("\n\n")}`;
+      const c = capabilityCounts();
+      const directShown = scoped.filter((t)=>t.server === "zeroscript").length;
+      const nativeShown = scoped.length - directShown;
+      const offlineNote = offlineServerIds.size ? `\nNative unavailable now: ${[...offlineServerIds].join(", ")}; its cached commands were hidden to prevent false execution. Multi-Script direct commands remain callable.` : "";
+      return `Output of '${name}':\nMULTI-SCRIPT CAPABILITY INDEX — ${c.direct} direct commands, ${c.skills} skills, ${c.virtual} internal specialists. These are real callable/retrievable capability layers and are separate from native MCP command counts. Use ms_studio_director for task-specific coordination, ms_list_skills/ms_get_skill for skills, and ms_list_virtual_tools for specialists.${offlineNote}\n\n${requested} catalogue: ${directShown} Multi-Script direct + ${nativeShown} live native = ${scoped.length} callable commands shown.\n\n${lines.join("\n\n")}`;
     }
     if (A.toolNames.size && !knownTool(name)) {
       return ZS.FEEDBACK.unknownTool(name, [...A.toolNames]);
@@ -1046,10 +1655,73 @@
       return `ERROR: '${name}' is not advertised by engine '${serverHint}'. Available on: ${route.servers.join(", ") || "none"}. Call list_commands for that server.`;
     }
     const routedName = route.ok ? route.name : name;
-    let r = await Promise.race([bg({ type: "call_tool", name: routedName, arguments: args, timeout }), hardCap, stopWatch]);
+    // ── Surface vision: tools the EXTENSION must answer, not the bridge ──
+    // ms_surface_read/type/open/focus need chrome.tabs + chrome.scripting, which
+    // only the service worker has. They are advertised by the bridge (so the
+    // model sees one coherent catalogue) but must never be forwarded to it. Also
+    // ms_surface_list is special: the bridge answers the WINDOW half, and we
+    // merge in the TAB half here so one call returns both.
+    let r;
+    if (routedName === "ms_surface_list") {
+      const ss = getSurfaceSettings();
+      const [winHalf, tabHalf] = await Promise.all([
+        ss.windows
+          ? Promise.race([bg({ type: "call_tool", name: "ms_surface_list", arguments: args, timeout }), hardCap])
+          : Promise.resolve(null),
+        ss.tabs
+          ? bg({ type: "surface_list", host: args.host, include_icons: false })
+          : Promise.resolve(null),
+      ]);
+      r = mergeSurfaceList(winHalf, tabHalf);
+    } else if (routedName === "ms_surface_read" || routedName === "ms_surface_type" ||
+               routedName === "ms_surface_open" || routedName === "ms_surface_focus" ||
+               routedName === "ms_surface_close") {
+      // Two layers, outermost first. The TRUST level decides whether this class
+      // of action is reachable at all; the per-feature grants below then narrow
+      // it. Enforced here, the single choke point every surface call passes.
+      const verb = routedName.slice("ms_surface_".length);
+      const trustCap = (verb === "read" || verb === "list") ? "browser.tabs.read" : "browser.tabs.drive";
+      const trust = canDo(trustCap);
+      if (!trust.allowed) {
+        return `ERROR: refused by the trust level. ${trust.reason}. Raise the trust level in Multi-Script settings if you want this, then retry.`;
+      }
+      const ss = getSurfaceSettings();
+      const needsRead = verb === "read";
+      const needsType = verb === "type";
+      const blocked =
+        (needsRead && !ss.allowRead) ||
+        (needsType && !ss.allowType) ||
+        (!needsRead && !needsType && !ss.tabs);
+      if (blocked) {
+        const why = needsRead ? "reading a tab's text" : needsType ? "typing into a tab" : "seeing browser tabs";
+        return `ERROR: the user has turned off "${why}" in Multi-Script settings, so this call is refused. Ask them to enable it in the Surface vision panel if they want it, then retry.`;
+      }
+      r = await Promise.race([bg({ type: `surface_${verb}`, ...args }), hardCap, stopWatch]);
+      // bg() resolves with the worker's response object directly; wrap it in the
+      // {ok,text} shape the rest of runTool expects so downstream formatting is
+      // identical to a bridge result.
+      if (r && r.ok !== false && r.error === undefined) {
+        r = { ok: true, text: JSON.stringify(r, null, 2) };
+      } else if (r) {
+        r = { ok: false, error: r.error || "surface call failed" };
+      }
+    } else if (routedName === "ms_app_list" || routedName === "ms_app_snapshot" || routedName === "ms_app_read_window") {
+      // Same two layers for the desktop half, which the bridge answers.
+      const trust = canDo("desktop.read");
+      if (!trust.allowed) {
+        return `ERROR: refused by the trust level. ${trust.reason}. Raise the trust level in Multi-Script settings if you want this, then retry.`;
+      }
+      const ss = getSurfaceSettings();
+      if (!ss.windows) {
+        return `ERROR: the user has turned off desktop-window visibility in Multi-Script settings, so this call is refused. Ask them to enable it in the Surface vision panel if they want it, then retry.`;
+      }
+      r = await Promise.race([bg({ type: "call_tool", name: routedName, arguments: args, timeout }), hardCap, stopWatch]);
+    } else {
+      r = await Promise.race([bg({ type: "call_tool", name: routedName, arguments: args, timeout }), hardCap, stopWatch]);
+    }
     clearInterval(stopTimer);
     if (r && r.kind === "stopped") return "(stopped by user)";
-    if (!r) return ZS.FEEDBACK.bridgeOffline;
+    if (!r) return bridgeOfflineFeedback();
     // The MCP server answers SUCCESSFULLY (ok:true) when no Studio is attached
     // (Studio closed / no place / MCP option disabled) - with an explanatory
     // text instead of a result. Surface it as a proper environment ERROR so the
@@ -1064,7 +1736,16 @@
     // Re-shape those into a real ERROR so the model corrects the call instead
     // of misreading it as tool output.
     if (r.ok && r.text && /^[\w .'"-]{0,60}\bis (required|not available|invalid)\b[\w .'"-]{0,80}$/i.test(r.text.trim())) {
-      return `ERROR calling '${name}': ${r.text.trim()}.\nA required or invalid parameter - check the command's parameters with list_commands, fix the call and retry.`;
+      const complaint = r.text.trim();
+      // studio_id deserves a bespoke answer. It is required on EVERY place-scoped
+      // Roblox command, so pointing the model at list_commands (a giant catalogue
+      // that gets truncated on arena.ai/DeepSeek) is what made it flail and start
+      // emitting prose/markup - the non-JSON error in the user's screenshot. Name
+      // the parameter, say WHY it only bites sometimes, and give the fix.
+      if (/studio_id/i.test(complaint)) {
+        return ZS.FEEDBACK.studioId(name, complaint, A.studios.map((s) => s.id), []);
+      }
+      return `ERROR calling '${name}': ${complaint}.\nA required or invalid parameter - check the command's parameters with list_commands, fix the call and retry.`;
     }
     // The Roblox MCP also reports Luau PARSE/RUNTIME errors as a SUCCESS whose
     // text is the executor's own stack trace ("…ExecuteLuauTool:139: …
@@ -1106,6 +1787,20 @@
         return `Output of '${name}':\n${caption}\n(The image is attached to THIS message - you can see it directly. Analyse it and continue.)`;
       }
       const text = r.text && r.text.length ? r.text : "(tool returned an empty result)";
+      // Learn the connected Studio ids from ANY answer that mentions them
+      // (list_roblox_studios is the direct one; get_studio_state and others also
+      // carry the id). Passive, so we never spend an extra turn asking, and it is
+      // what lets the studio_id fill-in above work on the very next call.
+      if (typeof ZSEngine !== "undefined" && ZSEngine.studiosFromBody) {
+        const found = ZSEngine.studiosFromBody(text);
+        if (found.length) {
+          const before = A.studios.length;
+          for (const s of found) if (!A.studios.some((x) => x.id === s.id)) A.studios.push(s);
+          if (A.studios.length !== before) {
+            diag("studios.learned", { ids: A.studios.map((s) => s.id) });
+          }
+        }
+      }
       return `Output of '${name}':\n${text}`;
     }
     // Orphaned content script - a page reload is the only cure, so say exactly
@@ -1118,7 +1813,7 @@
       diag("bridge.staleExtension", { name, error: r.error });
       return ZS.FEEDBACK.staleExtension;
     }
-    if (r.kind === "disconnected") return ZS.FEEDBACK.bridgeOffline;
+    if (r.kind === "disconnected") return bridgeOfflineFeedback();
     if (r.kind === "timeout") {
       return `ERROR: tool '${name}' timed out after ${name === "execute_luau" ? 20 : 120}s.\n${r.error}\nTry a shorter/simpler call or check that Roblox Studio is open and responsive.`;
     }
@@ -1142,6 +1837,57 @@
           ? "Lua runtime error. Check that the API you are calling exists (use game:GetService() to access services). Make sure you use 'return' to output values, not 'print()'."
           : "Check your Lua syntax, make sure you use 'return' to output values (not 'print()'), and that all APIs you call exist in the current Roblox Studio context.";
       return `ERROR in execute_luau: ${err}\n\n${hint}\n\nFix the code and retry.`;
+    }
+    // The BRIDGE's own schema validator rejected the arguments before the tool
+    // ever ran. Its message is precise but easy to skim past, and it arrives as
+    // ok:false - a DIFFERENT path from the server's ok:true complaint handled
+    // above, which is why a bare "Read the error carefully" left the model going
+    // in circles and producing malformed JSON instead of fixing one field.
+    //
+    // Seen live: "multi_edit: invalid parameters: parameters.edits[0].old_string
+    // is required". The model needed three things it did not have: confirmation
+    // that the tool name was fine, the exact nested PATH it dropped, and the full
+    // required SHAPE to copy. Give it all three, plus the template we already ship
+    // for that tool - the shape is what a model actually copies from.
+    const vErr = String(r.error || "");
+    // First line only: the bridge appends SIGNATURE / MINIMAL CALL lines after it.
+    const badParam = /invalid parameters:\s*([^\n]+)/i.exec(vErr);
+    if (badParam) {
+      const detail = badParam[1].trim();
+      // Greedy on purpose: the path can be long and dotted
+      // ("parameters.edits[0].old_string"), and a lazy quantifier stops at the
+      // first word boundary, truncating it to "parameters". Require the WHOLE
+      // remainder of the message to be the "is required" clause so we never
+      // swallow unrelated text.
+      const missing = /^(.+?)\s+is required[.!]?$/i.exec(detail);
+      const tpl = ZS.toolNote ? (typeof ZSEngine !== "undefined" && ZSEngine.templateFor
+        ? ZSEngine.templateFor(bareToolName(name)) : "") : "";
+      const shapeLine = tpl
+        ? `\nThe required shape for '${bareToolName(name)}' is:\n${tpl}`
+        : "";
+      if (missing) {
+        const path = missing[1].trim();
+        // Name the exact missing field, and make the nested case explicit - a
+        // model that omitted `edits[0].old_string` needs to know the field lives
+        // INSIDE each object of the array, not at the top level.
+        //
+        // NOTE the regex is NOT anchored to the start of the path: the real
+        // message is "parameters.edits[0].old_string is required", i.e. the
+        // array access sits in the middle. A ^-anchored pattern silently failed
+        // to recognise every genuine nested error (first shipped 6.17.1 and
+        // caught by tests/test_required_param_contract.js).
+        const nested = /(?:^|\.)([A-Za-z0-9_]+)\[\d+\]\.([A-Za-z0-9_]+)$/.exec(path);
+        const where = nested
+          ? `'${nested[2]}' must be present on EVERY object inside the '${nested[1]}' array - it is a nested field, not a top-level one.`
+          : `'${path}' must be present.`;
+        return `ERROR calling '${bareToolName(name)}': the command was NOT run - its arguments were rejected before execution ` +
+          `because ${path} is required.\n${where}\n` +
+          `Do NOT rename the command and do NOT change anything else: re-send the SAME command with '${path}' added to the ` +
+          `params you already wrote (keep every other value as it was).${shapeLine}\n` +
+          `Raw: ${vErr}`;
+      }
+      return `ERROR calling '${bareToolName(name)}': the command was NOT run - its arguments were rejected: ${detail}.\n` +
+        `Fix only what the message names, then re-send the SAME command.${shapeLine}\nRaw: ${vErr}`;
     }
     return `ERROR calling '${name}': ${r.error}\nRead the error carefully, fix the call or try a different approach.`;
   }
@@ -1248,6 +1994,34 @@
     A.loopKey = null; // pinned by syncSessionState once this chat has an id + content
     let truncCount = 0;
     const MAX_TRUNC = 6;
+    // ── Recovery bookkeeping (see ZSResilience) ─────────────────────────────
+    // failAttempts counts retries already spent on the CURRENT failure streak;
+    // failStreak counts consecutive failures of any kind. Both reset the moment
+    // a turn produces something usable (a tool call or a real answer), so a
+    // long healthy session never accumulates toward the give-up threshold.
+    let failAttempts = 0;
+    let failStreak = 0;
+    const resetFails = () => { failAttempts = 0; failStreak = 0; };
+    // Shared handler for a recoverable failure. Returns true when the loop
+    // should continue (a retry was sent), false when it must stop.
+    const recoverFrom = async (kind, extra = {}) => {
+      const d = ZSResilience.decide(rlevel(), kind, { attempt: failAttempts, consecutive: failStreak, ...extra });
+      diag("recover.decide", { kind, action: d.action, reason: d.reason, attempt: failAttempts, streak: failStreak, delayMs: d.delayMs, level: d.level });
+      if (d.action !== "retry" && d.action !== "resend") return false;
+      failAttempts++;
+      failStreak++;
+      A.lastErrorAt = Date.now(); // arms the pacing engine's error cooldown
+      const label = kind === "parse_error" ? "Malformed command"
+        : kind === "timeout" ? "No response"
+        : kind === "busy" ? "Site busy"
+        : "Empty reply";
+      ui.toast(`${label} · recovering (${failAttempts}/${d.attemptsLeft + failAttempts})…`);
+      if (d.delayMs > 0 && !(await paceSleep(d.delayMs))) return false;
+      if (A.stop) return false;
+      const text = d.action === "resend" ? (extra.raw != null ? extra.raw : "") : d.feedback;
+      if (text) base = await submitAndGetBase(text);
+      return true;
+    };
     // Re-send the command list after this many successful tool calls. Kept high
     // so the reminder does not bloat the context too often.
     const REMIND_TOOLS_EVERY = 20;
@@ -1255,6 +2029,62 @@
     P.setInputLock(true); // prevent user from typing while the agent is active
     ui.inputCover(true);  // keep the "Agent is working" cover up for the WHOLE loop
     diag("loop.start", { base });
+    // ── Prompt enhancer kickoff ─────────────────────────────────────────────
+    // The enhancer does NOT edit the user's message (it is already in the chat,
+    // and rewriting a user's own words behind their back would be dishonest).
+    // Instead it sends the ENHANCED BRIEF as the loop's first turn, so the model
+    // has the precise version while the user's raw wording stays visible above it.
+    //
+    // Only ever fires on the FIRST turn of a loop, only when the enhancer is on,
+    // and only for the user's own request (A.lastUserText), never for feedback.
+    enhanceKickoff: {
+      const es = getEnhanceSettings();
+      const source = String(A.lastUserText || "").trim();
+      A.lastUserText = ""; // consume it: a later loop must not re-send the same brief
+      if (es.mode !== "off" && source) {
+        try {
+          const facts = {
+            engines: connectedEngineIds(),
+            enginesChecked: true,
+            studioIds: (A.studios || []).map((s) => s.id).filter(Boolean),
+            toolCount: (A.toolList || []).length,
+            toolNames: (A.toolList || []).map((t) => typeof t === "string" ? t : (t && t.name)).filter(Boolean),
+          };
+          const r = ZSEnhance.enhance(source, facts, es);
+          if (r.enhanced && r.text) {
+            if (es.preview && ui.reviewEnhancedPrompt) {
+              const choice = await ui.reviewEnhancedPrompt(source, r);
+              if (!choice || choice.action === "cancel") {
+                A.stop = true;
+                ui.toast("Run cancelled before the enhanced brief was sent");
+                return;
+              }
+              if (choice.action === "original") {
+                diag("enhance.review", { action: "original", intent: r.intent });
+                ui.toast("Using your original request");
+                // The original message is already in the chat. Sending it again
+                // would duplicate the request, so simply continue the loop.
+                break enhanceKickoff;
+              }
+              if (choice.text && choice.text.trim()) r.text = choice.text.trim();
+              diag("enhance.review", { action: "enhanced", edited: r.text !== choice.originalText });
+            }
+            diag("enhance.send", { intent: r.intent, added: r.added, chars: r.text.length });
+            ui.toast(`Prompt enhancer: ${r.intent} brief added`);
+            base = await submitAndGetBase(r.text);
+            if (A.stop) return;
+            // Let the brief land before the loop starts reading replies.
+            await waitFor(() => !P.isGenerating(), 20000);
+          } else if (r.skipped) {
+            diag("enhance.skip", { reason: r.skipped });
+          }
+        } catch (e) {
+          // The enhancer is an OPTIONAL quality layer. If anything about it fails,
+          // the loop must still run on the user's own request - never strand them.
+          diag("enhance.error", { error: String((e && e.message) || e) });
+        }
+      }
+    }
     try {
       while (!A.stop) {
         // Gate the WHOLE cycle on tab visibility. We only advance - read the
@@ -1276,6 +2106,13 @@
           if (!(await waitVisible()) || A.stop) break; // park (no cap) until foreground; break only on user stop
           diag("loop.visibleAgain");
         }
+        // A bot-check issued mid-session (Arena re-issues them) blocks the whole
+        // page. Park here - the user clears it, and the loop continues on its own
+        // instead of dying. See awaitHumanVerification.
+        if (P.captchaPresent && P.captchaPresent() && !A.stop) {
+          if (!(await awaitHumanVerification("loop"))) break;
+          ui.inputCover(true);
+        }
         const res = await waitForResponse(base);
         diag("response", { kind: res.kind });
         if (A.stop || res.kind === "stopped") break;
@@ -1290,21 +2127,28 @@
             `${P.displayName} reports the conversation is getting too long. Start a new session.`);
           break;
         }
-        if (res.kind === "timeout") {
-          ui.banner("warn", `No response from ${P.displayName}`,
-            `${P.displayName} did not respond in time. The loop has stopped.`);
-          break;
-        }
-        // A genuinely empty turn is effectively never produced (the warm-up guard
-        // waits out slow starts). It DOES happen when the site drops a reply, and
-        // ending the loop silently is what made this the single most confusing
-        // failure: the pending command just settles to a grey "not run" with no
-        // explanation anywhere. Say what happened.
-        if (res.kind === "empty") {
-          diag("empty.end");
-          ui.banner("warn", `${P.displayName} returned an empty reply`,
-            `The turn produced no text, so the agent loop stopped. Nothing was run. ` +
-            `Ask ${P.displayName} to continue, or press Start again in a new chat.`);
+        // ── Recoverable failures ────────────────────────────────────────────
+        // A timeout or a dropped/empty turn used to end the loop outright. In an
+        // unattended run that is the single most annoying failure: the site
+        // hiccups for one turn and hours of work stop. ZSResilience decides
+        // whether another attempt is worth it (bounded, with backoff, and never
+        // more than a few in a row) and hands back the exact nudge to send.
+        if (res.kind === "timeout" || res.kind === "empty" || res.kind === "busy") {
+          if (await recoverFrom(res.kind)) continue;
+          if (res.kind === "timeout") {
+            ui.banner("warn", `No response from ${P.displayName}`,
+              `${P.displayName} did not respond in time and the recovery budget for this ` +
+              `failure is spent, so the loop has stopped. Press Start again to continue.`);
+          } else if (res.kind === "busy") {
+            ui.banner("warn", `${P.displayName} is busy`,
+              `${P.displayName} reported it is temporarily busy or asked to try again, and the ` +
+              `single retry did not clear it. Nothing was run. Press Start again in a moment, or ` +
+              `reload the page.`);
+          } else {
+            ui.banner("warn", `${P.displayName} returned an empty reply`,
+              `The turn produced no text and the recovery budget is spent, so the loop stopped. ` +
+              `Nothing was run. Ask ${P.displayName} to continue, or press Start again.`);
+          }
           break;
         }
 
@@ -1350,12 +2194,22 @@
           // Pass the detected command name so the feedback only offers the
           // ###LUA### block when it actually applies (execute_luau) - never for a
           // truncated/broken execute_blender_code or other JSON-only command.
-          base = await submitAndGetBase(ZS.FEEDBACK.parseError(res.reason, failName));
-          continue;
+          // Bounded by the recovery level: a model that keeps emitting the same
+          // malformed envelope gets a few corrected attempts, then the loop stops
+          // honestly instead of looping on bad JSON forever.
+          if (await recoverFrom("parse_error", { name: failName, feedback: ZS.FEEDBACK.parseError(res.reason, failName) })) continue;
+          ui.banner("warn", "Command could not be parsed",
+            `The reply looked like a command but was not one complete JSON object, and the ` +
+            `recovery budget is spent. Nothing was run - ask ${P.displayName} to re-send the ` +
+            `command as exactly one plain-text JSON object.`);
+          break;
         }
         if (res.kind === "text") break; // final answer
 
         if (res.kind === "tool") {
+          // A complete, parseable command came back: the session is healthy, so
+          // the recovery streak resets (a failure much later starts from zero).
+          resetFails();
           const calls = res.calls;
           if (calls.length > 1) {
             base = await submitAndGetBase(ZS.FEEDBACK.multiTool(calls.map((c) => c.tool || "?")));
@@ -1649,11 +2503,18 @@
     const skillMesh = ZS.skillToolCoveragePrompt ? ZS.skillToolCoveragePrompt(ui.getSkillDepth()) : ""; // always-on capability enhancement; promptSkills controls rewriting only
     const providerBehavior = ZS.providerBehaviorPrompt ? ZS.providerBehaviorPrompt(behavior, P.displayName || P.id) : "";
     const sessionMode = A.chatOnly && ZS.chatOnlyPrompt ? ZS.chatOnlyPrompt(P.displayName || P.id) : "";
-    const custom = [sessionMode, economy, skillMesh, providerBehavior, ui.getCustomPrompt()].filter(Boolean).join("\n\n");
+    // One-shot / unattended autonomy. Placed FIRST in the custom stack so it is
+    // the first thing a long context still has when the site summarises, and
+    // repeated by the mid-session re-statement like every other layer.
+    const autonomy = ZS.autonomyPrompt ? ZS.autonomyPrompt(autonomyLevel, P.displayName || P.id) : "";
+    const custom = [autonomy, executionEffortPrompt(), sessionMode, economy, skillMesh, providerBehavior, ui.getCustomPrompt()].filter(Boolean).join("\n\n");
     const base = ZS.buildSystemPrompt({
       siteName: P.displayName,
       customPrompt: custom,
       providerNotes: P.promptExtra || "",
+      // Engine-aware: the prompt's connection paragraph, project-memory section
+      // and first-action instruction all depend on which engines are really here.
+      engines: connectedEngineIds(),
     });
     // Notion Auto routing hints work best at the top. Keep the marker first for
     // session detection, then the minimal real-model request, then the complete
@@ -1880,8 +2741,19 @@
           return;
         }
       }
-      const modeState = await P.ensureComposerReady("startup");
+      let modeState = await P.ensureComposerReady("startup");
       if (!alive()) return;
+      // A bot-check at startup no longer aborts the bootstrap: park until the
+      // user clears it, then re-check the composer and carry on with the SAME
+      // Start press. Multi-Script never solves the challenge itself.
+      if (!modeState.ready && modeState.humanVerificationRequired) {
+        const cleared = await awaitHumanVerification("startup");
+        if (!alive()) return;
+        if (cleared) {
+          modeState = await P.ensureComposerReady("startup");
+          if (!alive()) return;
+        }
+      }
       if (!modeState.ready) {
         if (modeState.humanVerificationRequired) {
           ui.banner("warn", "Human verification required",
@@ -1892,6 +2764,29 @@
         }
         return;
       }
+      // Learn the connected Roblox Studio ids BEFORE the model's first command.
+      //
+      // Roblox's MCP needs studio_id on every place-scoped command, and the model
+      // has no way to know the value until it asks. Relying on the model to call
+      // list_roblox_studios first is exactly what failed on arena.ai/DeepSeek:
+      // those models go straight to a command, drop studio_id, and - with two
+      // Studios attached - get "parameters.studio_id is required" instead of work.
+      // Probing here costs one cheap round trip on the BACKEND (no model turn, no
+      // visible message) and turns the whole class of failures into a silent
+      // auto-fill. Best-effort by design: any error is ignored, because the
+      // prompt still tells the model to discover the id itself when this fails.
+      A.studios = [];
+      try {
+        const probe = await bg({ type: "call_tool", name: "list_roblox_studios", arguments: {}, timeout: 15000 });
+        if (probe && probe.ok && probe.text && typeof ZSEngine !== "undefined" && ZSEngine.studiosFromBody) {
+          const found = ZSEngine.studiosFromBody(probe.text);
+          if (found.length) {
+            A.studios = found;
+            diag("studios.bootProbe", { count: found.length, ids: found.map((s) => s.id) });
+          }
+        }
+      } catch (e) { diag("studios.bootProbe.error", { error: String(e && e.message || e) }); }
+      if (!alive()) return;
       const prompt = systemPrompt();
       bootstrapClaims.add(claimKey);
       const base = await submitAndGetBase(prompt);
@@ -2555,19 +3450,19 @@
   //  UI  (control panel, onboarding, stop button, banners, toast, input cover)
   // ════════════════════════════════════════════════════════════════════════
   const ui = (() => {
-    let root, bar, dot, brandEl, stateEl, actionBtn, chatOnlyBtn, stopBtn, switchBtn, supportBtn, discordEl, menuEl, unstableEl;
+    let root, bar, dot, brandEl, stateEl, actionBtn, chatOnlyBtn, stopBtn, switchBtn, supportBtn, bridgeBtn, bridgeRunBtn, modelChip, discordEl, menuEl, unstableEl;
     let cover, coverRaf, barRaf;
     let openMenuFn = null; // set by build(); lets the popup force the panel open via runtime message
     let bridgeOk = false, studioDown = false, placeDown = false, appDown = false, addonOk = false, studioProcUp = false;
     let wasConnected = false, bridgeBannerEl = null;
     const DEFAULT_MENU_PREFS = {
-      accent: "#7c6cf2", density: "comfortable", width: "medium", scale: "100",
-      radius: "soft", theme: "midnight", font: "system", backdrop: "mesh", motion: "full",
+      accent: "#d8d8e2", density: "comfortable", width: "medium", scale: "100",
+      radius: "soft", theme: "mono", font: "system", backdrop: "mesh", motion: "full",
       brandName: "Multi-Script", brandIcon: "✦", tagline: "Create without limits",
-      showOverview: true, defaultTab: "agent"
+      showOverview: true, defaultTab: "studio"
     };
     let menuPrefs = { ...DEFAULT_MENU_PREFS };
-    const MENU_PREF_ENUMS = { density:["compact","comfortable","spacious"], width:["small","medium","wide","studio"], scale:["90","100","115"], radius:["sharp","soft","round"], theme:["auto","midnight","graphite","frost","synthwave","forest"], font:["system","rounded","mono"], backdrop:["solid","glass","mesh"], motion:["full","reduced","none"], defaultTab:["agent","engines","sites","help"] };
+    const MENU_PREF_ENUMS = { density:["compact","comfortable","spacious"], width:["small","medium","wide","studio"], scale:["90","100","115"], radius:["sharp","soft","round"], theme:["auto","midnight","graphite","frost","mono","ink","synthwave","forest"], font:["system","rounded","mono"], backdrop:["solid","glass","mesh"], motion:["full","reduced","none"], defaultTab:["setup","appearance","studio","agent","notion","interface","engines","sites","help"] };
     function sanitizeMenuPrefs(raw) {
       const out={...DEFAULT_MENU_PREFS}, src=raw && typeof raw==="object" ? raw : {};
       for(const [key,allowed] of Object.entries(MENU_PREF_ENUMS)) if(allowed.includes(String(src[key]))) out[key]=String(src[key]);
@@ -2578,16 +3473,32 @@
       if(typeof src.showOverview==="boolean") out.showOverview=src.showOverview;
       return out;
     }
+    // Theme coherence. The menu theme (mono/ink/midnight…) and the page's own
+    // light/dark mode used to be applied independently, so the default dark Mono
+    // panel on a LIGHT page (Notion's light mode) got the light-mode TEXT colours
+    // on a dark background - unreadable. One rule now decides both: Frost is
+    // light, the explicit dark themes are dark, and Auto/Mono follow the page.
+    const DARK_MENU_THEMES = ["midnight", "graphite", "ink", "synthwave", "forest"];
+    let pageIsLight = false;
+    function effectiveLight() {
+      if (menuPrefs.theme === "frost") return true;
+      if (DARK_MENU_THEMES.includes(menuPrefs.theme)) return false;
+      return pageIsLight;
+    }
+    function effectiveMenuTheme() {
+      return (menuPrefs.theme === "mono" || menuPrefs.theme === "auto") && effectiveLight() ? "frost" : menuPrefs.theme;
+    }
     function applyMenuPrefs() {
       if (!root) return;
       const accent = /^#[0-9a-f]{6}$/i.test(menuPrefs.accent || "") ? menuPrefs.accent : DEFAULT_MENU_PREFS.accent;
-      const widths = { small:"310px", medium:"370px", wide:"440px", studio:"520px" };
+      const widths = { small:310, medium:370, wide:440, studio:520 };
       root.style.setProperty("--ms-accent", accent);
-      root.style.setProperty("--ms-menu-width", widths[menuPrefs.width] || widths.medium);
+      root.style.setProperty("--ms-menu-width", (widths[menuPrefs.width] || widths.medium) + "px");
       root.style.setProperty("--ms-ui-scale", String((Number(menuPrefs.scale) || 100) / 100));
       root.style.setProperty("--ms-radius", menuPrefs.radius === "sharp" ? "4px" : menuPrefs.radius === "round" ? "16px" : "9px");
       root.dataset.msDensity = menuPrefs.density;
-      root.dataset.msTheme = menuPrefs.theme;
+      root.dataset.msTheme = effectiveMenuTheme();
+      document.documentElement.classList.toggle("zs-light", effectiveLight());
       root.dataset.msFont = menuPrefs.font;
       root.dataset.msBackdrop = menuPrefs.backdrop;
       root.dataset.msMotion = menuPrefs.motion;
@@ -2597,6 +3508,30 @@
         const v=document.createElement("span"); v.className="zs-free"; v.textContent=`v${EXT_VERSION}`; brandEl.appendChild(v);
       }
     }
+    // Ambient light: move the panel's own radial origin to follow the pointer.
+    // Written straight to a custom property, so it costs one style write per
+    // FRAME-COALESCED move and never touches layout. Skipped entirely when the
+    // user chose reduced/none motion, since a moving highlight IS motion.
+    function installAmbientLight() {
+      let raf = 0, lastX = 0, lastY = 0;
+      const apply = () => {
+        raf = 0;
+        if (!menuEl || !menuEl.offsetParent) return;
+        const r = menuEl.getBoundingClientRect();
+        if (!r.width || !r.height) return;
+        const x = Math.max(0, Math.min(100, ((lastX - r.left) / r.width) * 100));
+        const y = Math.max(0, Math.min(100, ((lastY - r.top) / r.height) * 100));
+        menuEl.style.setProperty("--mono-mx", x.toFixed(1) + "%");
+        menuEl.style.setProperty("--mono-my", y.toFixed(1) + "%");
+      };
+      document.addEventListener("mousemove", (e) => {
+        if (menuPrefs.motion !== "full") return;
+        if (!menuEl || menuEl.hidden) return;
+        lastX = e.clientX; lastY = e.clientY;
+        if (!raf) raf = requestAnimationFrame(apply);
+      }, { passive: true });
+    }
+    installAmbientLight();
     function saveMenuPrefs() { try { chrome.storage.local.set({ msMenuPreferences: menuPrefs }); } catch {} applyMenuPrefs(); }
     try { chrome.storage.local.get("msMenuPreferences", (r) => { if (r && r.msMenuPreferences) menuPrefs = sanitizeMenuPrefs(r.msMenuPreferences); applyMenuPrefs(); if (menuEl && !menuEl.hidden) buildMenu(); }); } catch {}
 
@@ -2617,8 +3552,11 @@
           <button id="zs-chat-only" title="Start the full Multi-Script studio prompt and starter profile without requiring an engine">Start without engine</button>
           <button id="zs-stop" hidden>■ Stop</button>
           <a id="zs-discord" href="https://discord.gg/D5G2HAzX8z" target="_blank" rel="noopener" title="Need help? Join our Discord"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg></a>
+          ${P.id === "notion" ? `<button id="zs-model" aria-label="Notion models and trial estimate" title="Notion models and trial estimate"><span id="zs-model-text">Models</span></button>` : ""}
           <button id="zs-switch" aria-label="Switch AI and options" title="Switch AI, custom prompt, support"><span id="zs-switch-name"></span><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
           <button id="zs-support" aria-label="Support Multi-Script" title="Support Multi-Script"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></button>
+          <button id="zs-bridge" aria-label="Bridge terminal" title="Bridge terminal"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="16" rx="2.5"/><polyline points="7 9.5 10 12 7 14.5"/><line x1="12.5" y1="14.5" x2="17" y2="14.5"/></svg></button>
+          <button id="zs-bridge-run" aria-label="What is running" title="What is running (bridge, engines, apps)"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
         </div>
         <div id="zs-menu" hidden></div>
         ${P.unstableWarning ? `<button id="zs-unstable" aria-label="Provider may be unstable" hidden>⚠ unstable</button>` : ""}
@@ -2635,6 +3573,9 @@
       stopBtn = root.querySelector("#zs-stop");
       switchBtn = root.querySelector("#zs-switch");
       supportBtn = root.querySelector("#zs-support");
+      bridgeBtn = root.querySelector("#zs-bridge");
+      bridgeRunBtn = root.querySelector("#zs-bridge-run");
+      modelChip = root.querySelector("#zs-model");
       discordEl = root.querySelector("#zs-discord");
       const swName = root.querySelector("#zs-switch-name");
       if (swName) swName.textContent = P.displayName || P.id;
@@ -2659,7 +3600,7 @@
       buildMenu();
       // Both bar controls open the same panel; the heart lands on the Support
       // section (last), the model button opens at the top with Switch AI.
-      const toggleMenu = (toSupport) => {
+      const toggleMenu = (toSupport, forceTab) => {
         menuEl.hidden = !menuEl.hidden;
         if (!menuEl.hidden) {
           // Rebuild on every open, not just once at page load: the initial
@@ -2667,6 +3608,7 @@
           // has arrived, so the very first render always shows an empty/stale
           // MCP servers section otherwise - nothing ever refreshed it after.
           menuTab = menuPrefs.defaultTab || "agent";
+          if (forceTab) menuTab = forceTab;
           buildMenu();
           syncMenuPrompt();
           refreshElevenLabsStatus(true);
@@ -2685,10 +3627,31 @@
       };
       switchBtn.addEventListener("click", (e) => { e.stopPropagation(); toggleMenu(false); });
       supportBtn.addEventListener("click", (e) => { e.stopPropagation(); toggleMenu(true); });
+      if (bridgeBtn) bridgeBtn.addEventListener("click", (e) => { e.stopPropagation(); onBridgeClick(); });
+      if (bridgeRunBtn) bridgeRunBtn.addEventListener("click", (e) => { e.stopPropagation(); onBridgeRunClick(); });
+      if (modelChip) {
+        modelChip.addEventListener("click", (e) => { e.stopPropagation(); toggleMenu(false, "notion"); });
+        onNotionUsageChange = refreshModelChip;
+        refreshModelChip();
+        setInterval(notionPassiveTick, 15000);
+        setTimeout(notionPassiveTick, 2500);
+      }
       openMenuFn = (toSupport) => { if (menuEl.hidden) toggleMenu(toSupport); };
+      // The "Running" list is a dropdown: it closes on an outside click or Escape.
+      // The log view stays put so you can keep it open while the agent works.
       document.addEventListener("click", (e) => {
-        if (menuEl.hidden) return;
-        if (!menuEl.contains(e.target) && !switchBtn.contains(e.target) && !supportBtn.contains(e.target))
+        if (notionProbing) return;
+        if (termPanel && termPanel.isOpen() && termPanel.currentTab() === "running"
+            && !(root && root.contains(e.target) && e.target.closest && e.target.closest("#zs-term,#zs-bridge,#zs-bridge-run"))) {
+          termPanel.close(); bridgeIdlePaint();
+        }
+      }, true);
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && termPanel && termPanel.isOpen()) { termPanel.close(); bridgeIdlePaint(); }
+      }, true);
+      document.addEventListener("click", (e) => {
+        if (menuEl.hidden || notionProbing) return;
+        if (!menuEl.contains(e.target) && !switchBtn.contains(e.target) && !supportBtn.contains(e.target) && !(modelChip && modelChip.contains(e.target)))
           menuEl.hidden = true;
       }, true);
 
@@ -2742,7 +3705,7 @@
     function getSkillDepth() { return skillDepth; }
     const SETTINGS_BACKUP_SCHEMA = 1;
     function buildSettingsBackup() {
-      return { product:"Multi-Script", schema:SETTINGS_BACKUP_SCHEMA, exportedBy:EXT_VERSION, appearance:sanitizeMenuPrefs(menuPrefs), providerBehavior:sanitizeProviderBehaviorMap(providerBehaviorMap), usageOptimizer:usageMode, specialistDepth:skillDepth, customInstructions:customPrompt.slice(0,12000), starterProfile:{provider:P.id,id:P.getAutoRoutingProfile?P.getAutoRoutingProfile():""}, notionPreferredModel:P.id==="notion"&&P.getAutoRoutingProfile?P.getAutoRoutingProfile():"", exclusions:["API keys","integration credentials","MCP launch commands","runtime state"] };
+      return { product:"Multi-Script", schema:SETTINGS_BACKUP_SCHEMA, exportedBy:EXT_VERSION, appearance:sanitizeMenuPrefs(menuPrefs), providerBehavior:sanitizeProviderBehaviorMap(providerBehaviorMap), usageOptimizer:usageMode, specialistDepth:skillDepth, customInstructions:customPrompt.slice(0,12000), promptEnhancer:ZSEnhance.sanitize(enhanceSettings), executionEffort, pacing:ZSPace.sanitize(paceSettings), errorRecovery:ZSResilience.sanitize(resilienceSettings), verification:ZSVerify.sanitize(verificationSettings), autonomy:autonomyLevel, starterProfile:{provider:P.id,id:P.getAutoRoutingProfile?P.getAutoRoutingProfile():""}, notionPreferredModel:P.id==="notion"&&P.getAutoRoutingProfile?P.getAutoRoutingProfile():"", exclusions:["API keys","integration credentials","MCP launch commands","runtime state"] };
     }
     function applySettingsBackup(raw) {
       if(!raw||raw.product!=="Multi-Script"||raw.schema!==SETTINGS_BACKUP_SCHEMA) throw new Error("Unsupported Multi-Script settings backup");
@@ -2751,8 +3714,16 @@
       usageMode=["off","balanced","compact"].includes(raw.usageOptimizer)?raw.usageOptimizer:"balanced";
       skillDepth=["focused","full","maximum"].includes(raw.specialistDepth)?raw.specialistDepth:"full";
       customPrompt=typeof raw.customInstructions==="string"?raw.customInstructions.slice(0,12000):"";
+      if(raw.promptEnhancer) enhanceSettings=ZSEnhance.sanitize(raw.promptEnhancer);
+      if(raw.executionEffort) executionEffort=sanitizeExecutionEffort(raw.executionEffort);
+      // Pacing / recovery / autonomy are optional in a backup (older exports do
+      // not carry them) - absent means "keep what is already configured".
+      if(raw.pacing) paceSettings=ZSPace.sanitize(raw.pacing);
+      if(raw.errorRecovery) resilienceSettings=ZSResilience.sanitize(raw.errorRecovery);
+      if(raw.verification) verificationSettings=ZSVerify.sanitize(raw.verification);
+      if(raw.autonomy) setAutonomyLevel(raw.autonomy);
       if(P.setAutoRoutingProfile){const id=raw.starterProfile&&raw.starterProfile.provider===P.id?raw.starterProfile.id:raw.notionPreferredModel;P.setAutoRoutingProfile(typeof id==="string"?id:"");}
-      try{chrome.storage.local.set({msSettingsSchemaVersion:SETTINGS_BACKUP_SCHEMA,msMenuPreferences:menuPrefs,msProviderBehavior:providerBehaviorMap,zsUsageOptimizer:usageMode,zsSkillToolDepth:skillDepth,zsCustomPrompt:customPrompt});}catch{}
+      try{chrome.storage.local.set({msSettingsSchemaVersion:SETTINGS_BACKUP_SCHEMA,msMenuPreferences:menuPrefs,msProviderBehavior:providerBehaviorMap,zsUsageOptimizer:usageMode,zsSkillToolDepth:skillDepth,zsCustomPrompt:customPrompt,msEnhanceSettings:enhanceSettings,msExecutionEffort:executionEffort,msPacingSettings:paceSettings,msResilienceSettings:resilienceSettings,msVerificationSettings:verificationSettings,zsAutonomyLevel:autonomyLevel});}catch{}
       applyMenuPrefs();
       return true;
     }
@@ -2859,6 +3830,356 @@
     // ── The "more" menu (⋯) ─────────────────────────────────────────────────
     // One popover holding every secondary control: other AI sites, the custom
     // prompt, and support (Ko-fi + Robux). Opens above the bar.
+
+    // ── Prompt enhancer panel ────────────────────────────────────────────
+    // Every control re-renders the live preview from the ACTUAL enhancer, so the
+    // user always sees the real output for the strength they picked - never a
+    // marketing approximation of it.
+
+    // ── Notion: chip, passive refresh, model/effort + trial controls ─────────
+    function refreshModelChip() {
+      if (!modelChip || !NU || !notionUsage) return;
+      const label = NU.chipText(notionUsage) || (P.currentModelLabel && P.currentModelLabel()) || "Models";
+      const el = modelChip.querySelector("#zs-model-text");
+      if (el && el.textContent !== label) el.textContent = label;
+      const est = NU.estimate(notionUsage);
+      modelChip.title = [est.summary].concat(est.detail).join("\n") + "\nRough estimate from your own counts and readings. Click for details.";
+    }
+    let notionTickN = 0;
+    function notionPassiveTick() {
+      if (!NU || !notionUsage || notionProbing || document.hidden) return;
+      try {
+        const label = P.currentModelLabel ? P.currentModelLabel() : "";
+        if (label && !/^models?$/i.test(label) && label !== notionUsage.selected.model) {
+          const hit = NU.findModel(notionUsage.models, label, { enabledOnly: false });
+          notionUsage = NU.sanitize({ ...notionUsage, selected: { model: hit ? hit.name : label, effort: notionUsage.selected.effort } });
+          saveNotionUsage();
+        }
+        // Credits / trial days only when Notion actually shows them (~every 5 min).
+        if (notionTickN++ % 20 === 0 && P.scanPageUsage) {
+          const scan = P.scanPageUsage();
+          if (scan && (scan.creditsRemaining != null || scan.daysLeft != null || scan.trialEndsAt != null)) saveNotionUsage(NU.applyScan(notionUsage, scan));
+        }
+      } catch {}
+      refreshModelChip();
+    }
+    function notionTabMarkup() {
+      if (P.id !== "notion" || !NU || !notionUsage) return "";
+      const nesc = (v) => String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+      const u = NU.sanitize(notionUsage), est = NU.estimate(u), sel = u.selected || {};
+      const selModel = u.models.find((m) => m.name === sel.model) || null;
+      const effortList = selModel && selModel.efforts.length ? selModel.efforts : (u.models.find((m) => m.efforts.length) || { efforts: [] }).efforts;
+      const label = (e) => ({ xhigh: "X-High" })[e] || e[0].toUpperCase() + e.slice(1);
+      const find = (q) => NU.findModel(u.models, q, { enabledOnly: false });
+      const flag = (q, name) => { if (!u.models.length) return ""; const m = find(q); return `<span class="zs-nm-flag ${m && m.enabled ? "ok" : "no"}">${name} ${m ? (m.enabled ? "enabled" : "locked") : "not listed"}</span>`; };
+      const rows = u.models.map((m) => `<button class="zs-behavior-opt zs-nm-model${m.name === sel.model ? " active" : ""}" data-nm-model="${nesc(m.name)}" ${m.enabled ? "" : "disabled"}><b>${nesc(m.name)}${m.badge ? ` <i>${nesc(m.badge)}</i>` : ""}</b><span>${m.enabled ? nesc(m.vendor || "enabled in this workspace") : "not enabled for this workspace/plan"}</span></button>`).join("");
+      const days = est.daysLeft !== null ? Math.ceil(est.daysLeft) : "";
+      const cred = est.creditsLeft !== null ? Math.round(est.creditsLeft) : "";
+      return `
+        <section class="zs-menu-sec zs-notion-sec" data-zs-tab="notion">
+          <div class="zs-sec-label"><span>Trial &amp; credits</span><span class="zs-provider-badge">rough estimate</span></div>
+          <div class="zs-nu-summary" id="zs-nu-summary">${nesc(est.summary)}</div>
+          ${est.detail.map((d) => `<div class="zs-menu-note">${nesc(d)}</div>`).join("")}
+          <div class="zs-nu-grid">
+            <label>Trial days left<input id="zs-nu-days" type="number" min="0" max="400" step="1" inputmode="numeric" value="${days}" placeholder="e.g. 9"></label>
+            <label>Credits left<input id="zs-nu-credits" type="number" min="0" step="1" inputmode="numeric" value="${cred}" placeholder="from Notion"></label>
+          </div>
+          <div class="zs-menu-actions"><button id="zs-nu-save" class="zs-mini-action">Save</button><button id="zs-nu-scan" class="zs-mini-action">Read from page</button><button id="zs-nu-reset" class="zs-mini-action">Reset estimate</button></div>
+          <div class="zs-menu-note">Notion does not publish a per-model price or an API for trial allowance. This counts the prompts sent from this browser and learns the credit cost per prompt each time you enter a new “credits left” reading — enter it twice and the number tightens. It is a guide, not Notion's billing.</div>
+          <div id="zs-nu-status" class="zs-menu-note"></div>
+        </section>
+        <section class="zs-menu-sec zs-notion-sec" data-zs-tab="notion">
+          <div class="zs-sec-label"><span>Models in agent mode</span><span class="zs-provider-badge">${u.modelsAt ? "detected" : "not detected yet"}</span></div>
+          <div class="zs-nm-flags">${flag("opus 5.5", "Opus 5.5")}${flag("sonnet 5.5", "Sonnet 5.5")}</div>
+          <div class="zs-menu-note">Notion turns models on per workspace and plan. Detect opens Notion's own model menu once, reads it and closes it again — it changes nothing. Selecting a model clicks that row in Notion's menu and then checks the label.</div>
+          ${rows ? `<div class="zs-choice-stack">${rows}</div>` : ""}
+          ${effortList.length ? `<div class="zs-sec-label zs-sub"><span>Effort</span></div><div class="zs-nm-efforts">${effortList.map((e) => `<button class="zs-mini-action zs-nm-effort${sel.effort === e ? " active" : ""}" data-nm-effort="${e}">${label(e)}</button>`).join("")}</div>` : (u.models.length ? `<div class="zs-menu-note">Notion's picker shows no effort levels for these models.</div>` : "")}
+          <div class="zs-menu-actions"><button id="zs-nm-detect" class="zs-mini-action">${u.modelsAt ? "Re-detect models" : "Detect enabled models"}</button></div>
+          <div id="zs-nm-status" class="zs-menu-note">${u.modelsAt ? `Last detected ${new Date(u.modelsAt).toLocaleString()}.` : "Open a Notion AI chat first so the model button is visible."}</div>
+        </section>`;
+    }
+
+    // Engines tab → Bridge: the same host calls the terminal icon uses.
+    function bindBridgeSection() {
+      const q = (sel) => menuEl.querySelector(sel);
+      const say = (t) => { const el = q("#zs-br-status"); if (el) el.textContent = t; };
+      const call = (type, extra) => new Promise((res) => { try { chrome.runtime.sendMessage({ type, ...(extra || {}) }, (r) => res(chrome.runtime.lastError ? { ok: false, error: chrome.runtime.lastError.message } : (r || { ok: false }))); } catch (e) { res({ ok: false, error: String(e) }); } });
+      const open = q("#zs-br-open");
+      if (open) open.addEventListener("click", () => { menuEl.hidden = true; const t = ensureTerm(); if (t) { t.openPanel("terminal"); bridgeIdlePaint(); } });
+      for (const [id, type, doing] of [["#zs-br-start", "host_start", "Starting the bridge…"], ["#zs-br-restart", "host_restart", "Restarting the bridge…"], ["#zs-br-stop", "host_stop", "Stopping the bridge…"]]) {
+        const b = q(id); if (!b) continue;
+        b.addEventListener("click", async () => {
+          say(doing); b.disabled = true;
+          const r = await call(type);
+          b.disabled = false;
+          if (r.ok) say(type === "host_stop" ? "Stopped. Click Start to run it again." : "Running — the bar will turn green in a moment.");
+          else if (r.code === "host_missing") say("One-time setup needed: run Setup.bat (Windows) or MacOS_Setup.command, then reload this tab.");
+          else say(`Could not ${type.replace("host_", "")}: ${String(r.error || r.code || "unknown").slice(0, 120)}`);
+        });
+      }
+      const auto = q("#zs-br-auto");
+      if (auto) {
+        call("host_prefs").then((r) => { auto.checked = r.autoStart !== false; });
+        auto.addEventListener("change", () => call("host_prefs", { set: true, autoStart: auto.checked }).then(() => say(auto.checked ? "Auto-start on." : "Auto-start off — use Start when you need the bridge.")));
+      }
+    }
+
+    function bindNotionTab() {
+      if (P.id !== "notion" || !NU) return;
+      const q = (sel) => menuEl.querySelector(sel);
+      const say = (id, t) => { const el = q(id); if (el) el.textContent = t; };
+      const lock = (on) => menuEl.querySelectorAll("#zs-nm-detect,.zs-nm-model,.zs-nm-effort").forEach((b) => { b.disabled = on || (b.classList.contains("zs-nm-model") && b.dataset.locked === "1"); });
+      async function probe(fn) {
+        if (notionProbing) return;
+        notionProbing = true; lock(true);
+        try { return await fn(); } catch (e) { say("#zs-nm-status", `Could not talk to Notion's picker: ${String((e && e.message) || e).slice(0, 100)}`); } finally { notionProbing = false; lock(false); }
+      }
+      const detect = q("#zs-nm-detect");
+      if (detect) detect.addEventListener("click", () => probe(async () => {
+        say("#zs-nm-status", "Opening Notion's model menu…");
+        const r = await P.detectModels();
+        if (!r.ok) { say("#zs-nm-status", r.error || "Could not read the model menu."); return; }
+        let next = NU.setModels(notionUsage, r.models);
+        if (r.selectedEffort) next = NU.sanitize({ ...next, selected: { ...next.selected, effort: r.selectedEffort } });
+        saveNotionUsage(next); buildMenu();
+        const on = r.models.filter((m) => m.enabled).length;
+        say("#zs-nm-status", `Found ${r.models.length} model${r.models.length === 1 ? "" : "s"} (${on} enabled)${r.efforts.length ? ` · effort levels: ${r.efforts.join(", ")}` : ""}.`);
+      }));
+      const pick = async (arg) => {
+        say("#zs-nm-status", "Selecting in Notion…");
+        const r = await P.selectModel(arg);
+        if (r.picked || r.effort) saveNotionUsage(NU.sanitize({ ...notionUsage, selected: { model: r.picked || notionUsage.selected.model, effort: r.effort || notionUsage.selected.effort } }));
+        buildMenu();
+        say("#zs-nm-status", r.ok ? `Selected ${r.picked || ""}${r.picked && r.effort ? " · " : ""}${r.effort || ""}. Notion now shows “${r.label || "?"}”${r.verified ? " ✓" : " (could not verify the label)"}.` : (r.error || "Notion did not accept that choice."));
+        toast(r.ok ? "Notion model updated" : (r.error || "Model not changed").slice(0, 110));
+      };
+      menuEl.querySelectorAll(".zs-nm-model").forEach((b) => {
+        const m = notionUsage.models.find((x) => x.name === b.dataset.nmModel);
+        if (m && !m.enabled) b.dataset.locked = "1";
+        b.addEventListener("click", () => probe(() => pick({ model: b.dataset.nmModel, effort: m && m.efforts.includes(notionUsage.selected.effort) ? notionUsage.selected.effort : "" })));
+      });
+      menuEl.querySelectorAll(".zs-nm-effort").forEach((b) => b.addEventListener("click", () => probe(() => pick({ effort: b.dataset.nmEffort }))));
+      const save = q("#zs-nu-save");
+      if (save) save.addEventListener("click", () => {
+        const dEl = q("#zs-nu-days"), cEl = q("#zs-nu-credits");
+        const shownCred = NU.estimate(notionUsage).creditsLeft, shownDays = NU.estimate(notionUsage).daysLeft;
+        let next = notionUsage;
+        const d = parseFloat(dEl.value), c = parseFloat(cEl.value);
+        if (Number.isFinite(d) && (shownDays === null || Math.ceil(shownDays) !== d)) next = NU.setTrial(next, { daysLeft: d });
+        if (dEl.value === "" && shownDays !== null) next = NU.sanitize({ ...next, trialEndsAt: null });
+        if (Number.isFinite(c) && (shownCred === null || Math.round(shownCred) !== c)) next = NU.observeCredits(next, c);
+        saveNotionUsage(next); buildMenu();
+        say("#zs-nu-status", "Saved. The estimate refines every time you enter a new credits reading.");
+      });
+      const scan = q("#zs-nu-scan");
+      if (scan) scan.addEventListener("click", () => {
+        const r = P.scanPageUsage ? P.scanPageUsage() : {};
+        const found = r && (r.creditsRemaining != null || r.daysLeft != null || r.trialEndsAt != null);
+        if (found) { saveNotionUsage(NU.applyScan(notionUsage, r)); buildMenu(); }
+        say("#zs-nu-status", found ? `Read from the page:${r.creditsRemaining != null ? ` ${r.creditsRemaining} credits` : ""}${r.daysLeft != null ? ` ${r.daysLeft} trial day(s)` : ""}${r.trialEndsAt ? " trial end date" : ""}.` : "Nothing about credits or the trial is visible on this page. Open Notion's Settings → Plans, or type the numbers in.");
+      });
+      const reset = q("#zs-nu-reset");
+      if (reset) reset.addEventListener("click", () => { const keep = notionUsage; saveNotionUsage({ ...NU.defaults(), models: keep.models, modelsAt: keep.modelsAt, selected: keep.selected }); buildMenu(); say("#zs-nu-status", "Estimate reset."); });
+    }
+
+    function bindEnhancePanel(scope) {
+      const MODES = ["off", "light", "balanced", "thorough"];
+      const slider = scope.querySelector("#ms-enhance-mode");
+      const label = scope.querySelector("#ms-enhance-mode-label");
+      const desc = scope.querySelector("#ms-enhance-desc");
+      const preview = scope.querySelector("#ms-enhance-preview");
+      const sample = "make the door open when the player touches it";
+
+      function renderPreview() {
+        const s = getEnhanceSettings();
+        const facts = { engines: A.engines && A.engines.length ? A.engines : [] };
+        const r = ZSEnhance.enhance(sample, facts, s);
+        if (preview) {
+          preview.classList.toggle("zs-enhance-off", !r.enhanced);
+          const out = preview.querySelector(".zs-enhance-out pre");
+          if (out) out.textContent = r.enhanced ? r.text : sample + "\n\n(the enhancer is off - this is sent as typed)";
+        }
+        if (label) label.textContent = (ZSEnhance.LEVELS[s.mode] || ZSEnhance.LEVELS.off).label;
+        if (desc) desc.textContent = ZSEnhance.describe(s);
+      }
+
+      if (slider) slider.addEventListener("input", () => {
+        const mode = MODES[Math.max(0, Math.min(MODES.length - 1, parseInt(slider.value, 10) || 0))];
+        setEnhanceSettings({ mode });
+        renderPreview();
+      });
+      const prev = scope.querySelector("#ms-enhance-preview-toggle");
+      if (prev) prev.addEventListener("change", () => { setEnhanceSettings({ preview: prev.checked }); renderPreview(); });
+      const ef = scope.querySelector("#ms-enhance-engine-facts");
+      if (ef) ef.addEventListener("change", () => { setEnhanceSettings({ injectEngineFacts: ef.checked }); renderPreview(); });
+      const tf = scope.querySelector("#ms-enhance-tool-facts");
+      if (tf) tf.addEventListener("change", () => { setEnhanceSettings({ injectToolFacts: tf.checked }); renderPreview(); });
+      const ap = scope.querySelector("#ms-enhance-approach");
+      if (ap) ap.addEventListener("change", () => { setEnhanceSettings({ injectApproach: ap.checked }); renderPreview(); });
+      const of = scope.querySelector("#ms-enhance-original-first");
+      if (of) of.addEventListener("change", () => { setEnhanceSettings({ keepOriginalFirst: of.checked }); renderPreview(); });
+      renderPreview();
+    }
+
+    // ── Media relay panel ────────────────────────────────────────────────
+    // Drop, paste or pick a file; relay it; then paste the result into the
+    // provider's own composer. The provider's attachImages() already knows how
+    // THIS site accepts an image, so the relay never re-implements that.
+    function bindMediaPanel(scope) {
+      const drop = scope.querySelector("#ms-media-drop");
+      const input = scope.querySelector("#ms-media-input");
+      const status = scope.querySelector("#ms-media-status");
+      const pasteBtn = scope.querySelector("#ms-media-paste");
+      const clearBtn = scope.querySelector("#ms-media-clear");
+
+      function setStatus(text, tone) {
+        if (!status) return;
+        status.textContent = text;
+        status.classList.remove("ok", "warn");
+        if (tone) status.classList.add(tone);
+      }
+
+      async function run(file) {
+        if (!file) return;
+        const rejection = ZSMediaRelay.rejectionFor(file);
+        if (rejection) { setStatus(rejection, "warn"); toast("Media relay: " + rejection); return; }
+        setStatus("Reading " + (file.name || "the file") + "…");
+        try {
+          const result = await ZSMediaRelay.relayFile(file, {
+            onStage: (info) => {
+              if (info.phase === "uploading") setStatus("Sending " + ZSMediaRelay.formatBytes(info.bytes) + " to the local bridge…");
+              else if (info.phase === "converting") setStatus(info.kind === "video" ? "Extracting frames from the clip…" : "Preparing the paste…");
+            },
+          });
+          setLastRelay(result);
+          setStatus(ZSMediaRelay.describeOutcome(result), result.ok ? "ok" : "warn");
+          if (pasteBtn) pasteBtn.disabled = !result.ok;
+          // Paste immediately: the user dropped a file to SHOW the model, so the
+          // extra click would be ceremony. The button remains for a re-paste.
+          if (result.ok) await pasteIntoComposer(result);
+        } catch (e) {
+          const msg = String((e && e.message) || e);
+          setLastRelay({ ok: false, error: msg, payloads: [] });
+          setStatus(msg, "warn");
+          if (pasteBtn) pasteBtn.disabled = true;
+        }
+      }
+
+      async function pasteIntoComposer(result) {
+        if (!result || !result.ok || !result.payloads.length) return false;
+        const attach = P.attachImages;
+        if (typeof attach !== "function") {
+          setStatus("Relayed, but this site has no image-attach path - the frames are ready, use Copy.", "warn");
+          return false;
+        }
+        setStatus("Pasting into the composer…");
+        try {
+          const ok2 = await attach(result.payloads);
+          setStatus(ok2 ? "Pasted - it is in the composer, add your message and send." : "Relayed, but the site did not accept the paste.", ok2 ? "ok" : "warn");
+          if (ok2 && getMediaSettings().releaseAfterSend && result.item) ZSMediaRelay.release(result.item.id);
+          return ok2;
+        } catch (e) {
+          setStatus("The paste failed: " + String((e && e.message) || e), "warn");
+          return false;
+        }
+      }
+
+      if (drop) {
+        drop.addEventListener("click", () => input && input.click());
+        drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("hot"); });
+        drop.addEventListener("dragleave", () => drop.classList.remove("hot"));
+        drop.addEventListener("drop", (e) => {
+          e.preventDefault();
+          drop.classList.remove("hot");
+          const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+          if (f) run(f);
+        });
+      }
+      if (input) input.addEventListener("change", () => { const f = input.files && input.files[0]; if (f) run(f); input.value = ""; });
+      if (pasteBtn) pasteBtn.addEventListener("click", () => pasteIntoComposer(getLastRelay()));
+      if (clearBtn) clearBtn.addEventListener("click", async () => {
+        const r = getLastRelay();
+        if (r && r.item) await ZSMediaRelay.release(r.item.id);
+        setLastRelay(null);
+        if (pasteBtn) pasteBtn.disabled = true;
+        setStatus("No media relayed yet. Drop a photo or a video below.");
+      });
+      const man = scope.querySelector("#ms-media-manifest");
+      if (man) man.addEventListener("change", () => setMediaSettings({ sendManifest: man.checked }));
+      const rel = scope.querySelector("#ms-media-release");
+      if (rel) rel.addEventListener("change", () => setMediaSettings({ releaseAfterSend: rel.checked }));
+    }
+
+    // ── Surface vision panel ─────────────────────────────────────────────
+    // Refresh asks the worker for tabs and the bridge for windows, then prints
+    // the two counts. It never renders tab titles into the page (they can carry
+    // private information); it reports how MUCH is visible, not WHAT. The model
+    // gets the detail through the tool call when it actually needs it.
+    function bindSurfacePanel(scope) {
+      const tabCount = scope.querySelector("#ms-surface-tabs");
+      const winCount = scope.querySelector("#ms-surface-windows");
+      const status = scope.querySelector("#ms-surface-status");
+      const refresh = scope.querySelector("#ms-surface-refresh");
+      const planBtn = scope.querySelector("#ms-surface-plan");
+
+      function setStatus(text, tone) {
+        if (!status) return;
+        status.textContent = text;
+        status.classList.remove("ok", "warn");
+        if (tone) status.classList.add(tone);
+      }
+
+      async function scan() {
+        setStatus("Scanning…");
+        try {
+          const tabs = await bg({ type: "surface_list", include_icons: false });
+          if (tabCount) tabCount.textContent = tabs && tabs.ok !== false ? String(tabs.count || 0) : "–";
+        } catch (_) {
+          if (tabCount) tabCount.textContent = "–";
+        }
+        try {
+          const w = await bg({ type: "call_tool", name: "ms_app_list", arguments: {}, timeout: 15000 });
+          let n = null;
+          if (w && w.ok !== false && typeof w.text === "string") {
+            try { n = (JSON.parse(w.text).count | 0); } catch (_) { n = null; }
+          }
+          if (winCount) winCount.textContent = n === null ? "–" : String(n);
+          if (n === null) setStatus("Tabs listed. Desktop windows need the local bridge running.", "warn");
+          else setStatus(`Visible now: ${tabCount ? tabCount.textContent : "?"} tab(s), ${n} app(s).`, "ok");
+        } catch (_) {
+          if (winCount) winCount.textContent = "–";
+          setStatus("Tabs listed. Desktop windows need the local bridge running.", "warn");
+        }
+      }
+
+      if (refresh) refresh.addEventListener("click", scan);
+      if (planBtn) planBtn.addEventListener("click", async () => {
+        setStatus("Fetching the setup plan…");
+        const r = await bg({ type: "call_tool", name: "ms_app_setup_plan", arguments: {}, timeout: 15000 });
+        if (!r || r.ok === false || typeof r.text !== "string") {
+          setStatus("The bridge is offline, so no plan is available right now.", "warn");
+          return;
+        }
+        let plan = null;
+        try { plan = JSON.parse(r.text); } catch (_) { plan = null; }
+        if (!plan || !Array.isArray(plan.steps)) { setStatus("The bridge returned an unreadable plan.", "warn"); return; }
+        const pending = plan.steps.filter((s) => !s.satisfied);
+        if (!pending.length) { setStatus(`Full desktop vision is already available on ${plan.platform}.`, "ok"); return; }
+        // Show the exact commands, never run them. The user copies what they want.
+        setStatus(`${pending.length} optional step(s) available on ${plan.platform}. Nothing is installed automatically:\n` +
+          pending.map((s) => `• ${s.label}\n  ${s.command}`).join("\n"), "warn");
+      });
+
+      const tT = scope.querySelector("#ms-surface-tabs-toggle");
+      if (tT) tT.addEventListener("change", () => setSurfaceSettings({ tabs: tT.checked }));
+      const tW = scope.querySelector("#ms-surface-windows-toggle");
+      if (tW) tW.addEventListener("change", () => setSurfaceSettings({ windows: tW.checked }));
+      const tR = scope.querySelector("#ms-surface-read-toggle");
+      if (tR) tR.addEventListener("change", () => setSurfaceSettings({ allowRead: tR.checked }));
+      const tY = scope.querySelector("#ms-surface-type-toggle");
+      if (tY) tY.addEventListener("change", () => setSurfaceSettings({ allowType: tY.checked }));
+    }
+
     function buildMenu() {
       const here = (P.displayName || "").toLowerCase();
       const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return ""; } };
@@ -2907,7 +4228,7 @@
       });
       const connectedNames = engineStates.filter((e) => e.connected === true).map((e) => e.id);
       const nextStep = !(A.bridge && A.bridge.connected) ? "Start the Multi-Script bridge, then refresh." : connectedNames.length ? "Everything is ready — start a new session or continue building." : "Bridge connected. Open Roblox Studio, Unity, or Godot to attach an editor.";
-      const overviewHtml = `<section class="zs-menu-sec" data-zs-tab="agent">
+      const overviewHtml = `<section class="zs-menu-sec" data-zs-tab="interface">
         <div class="zs-overview">
           <div><span class="zs-overview-k">Provider</span><b>${esc(P.displayName || P.id)}</b></div>
           <div><span class="zs-overview-k">Bridge</span><b>${A.bridge && A.bridge.connected ? "Connected" : "Offline"}</b></div>
@@ -2916,15 +4237,15 @@
         </div>
         <div class="zs-next-step"><b>Next step</b><span>${esc(nextStep)}</span></div>
       </section>`;
-      const appearanceHtml = `<section class="zs-menu-sec zs-appearance-lab" data-zs-tab="agent">
+      const appearanceHtml = `<section class="zs-menu-sec zs-appearance-lab" data-zs-tab="appearance">
         <div class="zs-sec-label"><span>Appearance studio</span><span class="zs-provider-badge">live preview</span></div>
         <div class="zs-custom-preview"><span class="zs-custom-preview-icon">${esc(menuPrefs.brandIcon || "✦")}</span><div><b>${esc(menuPrefs.brandName || "Multi-Script")}</b><span>${esc(menuPrefs.tagline || "Create without limits")}</span></div><i></i></div>
         <div class="zs-setting-title">Identity</div>
         <div class="zs-brand-grid"><input id="ms-brand-icon" maxlength="3" value="${esc(menuPrefs.brandIcon || "✦")}" aria-label="Brand icon"><input id="ms-brand-name" maxlength="28" value="${esc(menuPrefs.brandName || "Multi-Script")}" placeholder="Menu name"><input id="ms-brand-tagline" maxlength="60" value="${esc(menuPrefs.tagline || "")}" placeholder="Personal tagline"></div>
         <div class="zs-setting-title">Theme</div>
-        <div class="zs-theme-grid">${[["auto","Auto"],["midnight","Midnight"],["graphite","Graphite"],["frost","Frost"],["synthwave","Synthwave"],["forest","Forest"]].map(([id,label]) => `<button class="zs-theme-opt${menuPrefs.theme===id?" active":""}" data-theme="${id}"><i></i><b>${label}</b></button>`).join("")}</div>
+        <div class="zs-theme-grid">${[["auto","Auto"],["midnight","Midnight"],["graphite","Graphite"],["frost","Frost"],["mono","Mono"],["ink","Ink"],["synthwave","Synthwave"],["forest","Forest"]].map(([id,label]) => `<button class="zs-theme-opt${menuPrefs.theme===id?" active":""}" data-theme="${id}"><i></i><b>${label}</b></button>`).join("")}</div>
         <div class="zs-setting-title">Accent</div>
-        <div class="zs-accent-grid">${["#7c6cf2","#2aa981","#3182ce","#d977a8","#e38b3c","#e05252","#22c7d6","#a3e635"].map((c) => `<button class="zs-accent-opt${menuPrefs.accent === c ? " active" : ""}" data-accent="${c}" style="--swatch:${c}" aria-label="Use ${c}"></button>`).join("")}<label class="zs-color-custom" title="Custom accent"><input id="ms-custom-accent" type="color" value="${esc(menuPrefs.accent)}"><span>+</span></label></div>
+        <div class="zs-accent-grid">${["#f4f4f7","#d8d8e2","#a9a9b6","#7c6cf2","#2aa981","#3182ce","#d977a8","#e38b3c","#e05252","#22c7d6"].map((c) => `<button class="zs-accent-opt${menuPrefs.accent === c ? " active" : ""}" data-accent="${c}" style="--swatch:${c}" aria-label="Use ${c}"></button>`).join("")}<label class="zs-color-custom" title="Custom accent"><input id="ms-custom-accent" type="color" value="${esc(menuPrefs.accent)}"><span>+</span></label></div>
         <div class="zs-setting-title">Layout</div>
         <label class="zs-pref-label">Density</label><div class="zs-pref-grid zs-pref-grid-3">${[["compact","Compact"],["comfortable","Comfort"],["spacious","Spacious"]].map(([id,label]) => `<button class="zs-pref-opt${menuPrefs.density===id?" active":""}" data-density="${id}">${label}</button>`).join("")}</div>
         <label class="zs-pref-label">Width</label><div class="zs-pref-grid zs-pref-grid-4">${[["small","Small"],["medium","Medium"],["wide","Wide"],["studio","Studio"]].map(([id,label]) => `<button class="zs-pref-opt${menuPrefs.width===id?" active":""}" data-width="${id}">${label}</button>`).join("")}</div>
@@ -2934,12 +4255,82 @@
         <label class="zs-pref-label">Corners</label><div class="zs-pref-grid zs-pref-grid-3">${[["sharp","Sharp"],["soft","Soft"],["round","Round"]].map(([id,label]) => `<button class="zs-pref-opt${menuPrefs.radius===id?" active":""}" data-radius="${id}">${label}</button>`).join("")}</div>
         <label class="zs-pref-label">Backdrop</label><div class="zs-pref-grid zs-pref-grid-3">${[["solid","Solid"],["glass","Glass"],["mesh","Mesh"]].map(([id,label]) => `<button class="zs-pref-opt${menuPrefs.backdrop===id?" active":""}" data-backdrop="${id}">${label}</button>`).join("")}</div>
         <label class="zs-pref-label">Motion</label><div class="zs-pref-grid zs-pref-grid-3">${[["full","Full"],["reduced","Reduced"],["none","None"]].map(([id,label]) => `<button class="zs-pref-opt${menuPrefs.motion===id?" active":""}" data-motion="${id}">${label}</button>`).join("")}</div>
-        <div class="zs-pref-row"><label><input id="ms-show-overview" type="checkbox" ${menuPrefs.showOverview ? "checked" : ""}> Show status overview</label><select id="ms-default-tab"><option value="agent">Open on Agent</option><option value="engines">Open on Engines</option><option value="sites">Open on AI sites</option><option value="help">Open on Help</option></select></div>
+        <div class="zs-pref-row"><label><input id="ms-show-overview" type="checkbox" ${menuPrefs.showOverview ? "checked" : ""}> Show status overview</label><select id="ms-default-tab"><option value="setup">Open on Setup</option><option value="appearance">Open on Appearance</option><option value="studio">Open on Studio</option><option value="agent">Open on Agent</option>${P.id === "notion" ? `<option value="notion">Open on Notion</option>` : ""}<option value="interface">Open on Interface</option><option value="engines">Open on Engines</option><option value="sites">Open on AI sites</option><option value="help">Open on Help</option></select></div>
         <div class="zs-menu-actions"><button id="ms-save-identity" class="zs-mini-action">Save identity</button><button id="ms-reset-menu" class="zs-mini-action">Reset appearance</button></div>
       </section>`;
+      // ── Prompt enhancer ────────────────────────────────────────────────
+      // Local, deterministic, no API call. The panel shows a live preview of the
+      // ACTUAL enhancement of the last request the user typed, so the toggle is
+      // not a leap of faith - they see exactly what would be sent.
+      const enh = enhanceSettings;
+      const enhPreviewSample = `make the door open when the player touches it`;
+      const enhPreview = ZSEnhance.enhance(enhPreviewSample, { engines: A.engines && A.engines.length ? A.engines : (A.bridge && A.bridge.connected ? [P.id] : []) }, enh);
+      const enhanceHtml = `<section class="zs-menu-sec zs-enhance-sec" data-zs-tab="studio">
+        <div class="zs-sec-label"><span>Prompt enhancer</span><span class="zs-provider-badge">local, no extra cost</span></div>
+        <div class="zs-menu-note">Turns a short request into a precise brief ${esc(P.displayName || P.id)} can execute: the goal, the constraints your words imply, the connected-engine facts, and what "done" means. Your own wording is always kept and sent first - this only <b>adds</b> to it, offline, with rules.</div>
+        <div class="zs-slider-row"><span class="zs-slider-label">Strength</span><input id="ms-enhance-mode" type="range" min="0" max="3" step="1" value="${["off","light","balanced","thorough"].indexOf(enh.mode) < 0 ? 0 : ["off","light","balanced","thorough"].indexOf(enh.mode)}"><b id="ms-enhance-mode-label">${esc((ZSEnhance.LEVELS[enh.mode] || ZSEnhance.LEVELS.off).label)}</b></div>
+        <div class="zs-menu-note" id="ms-enhance-desc">${esc(ZSEnhance.describe(enh))}</div>
+        <label class="zs-pref-label">Preview before sending</label>
+        <div class="zs-enhance-preview" id="ms-enhance-preview">
+          <div class="zs-enhance-orig"><span>You type</span><p>${esc(enhPreviewSample)}</p></div>
+          <div class="zs-enhance-arrow">↓</div>
+          <div class="zs-enhance-out"><span>Agent receives</span><pre>${esc(enhPreview.text)}</pre></div>
+        </div>
+        <div class="zs-pref-row"><label><input id="ms-enhance-preview-toggle" type="checkbox" ${enh.preview ? "checked" : ""}> Review each enhanced prompt before it sends</label></div>
+        <div class="zs-pref-row"><label><input id="ms-enhance-engine-facts" type="checkbox" ${enh.injectEngineFacts ? "checked" : ""}> Include connected-engine facts</label></div>
+        <div class="zs-pref-row"><label><input id="ms-enhance-tool-facts" type="checkbox" ${enh.injectToolFacts ? "checked" : ""}> Include live tool facts</label></div>
+        <div class="zs-pref-row"><label><input id="ms-enhance-approach" type="checkbox" ${enh.injectApproach ? "checked" : ""}> Add a task-shaped execution approach</label></div>
+        <div class="zs-pref-row"><label><input id="ms-enhance-original-first" type="checkbox" ${enh.keepOriginalFirst ? "checked" : ""}> Keep my wording first</label></div>
+      </section>`;
+
+      const effortHtml = `<section class="zs-menu-sec zs-effort-sec" data-zs-tab="studio">
+        <div class="zs-sec-label"><span>Execution effort</span><span class="zs-provider-badge">${P.id === "notion" ? "Notion startup harness" : "all providers"}</span></div>
+        <div class="zs-menu-note">Controls how much implementation depth Multi-Script asks from the active model. It never changes available tools, bypasses provider limits, or pretends a hidden reasoning setting was changed.${P.id === "notion" ? " In Notion AI this is carried inside the prompt-only startup harness, separate from the preferred-model request." : ""}</div>
+        <div class="zs-choice-stack">
+          ${Object.entries(EXECUTION_EFFORTS).map(([id, x]) => `<button class="zs-behavior-opt${executionEffort === id ? " active" : ""}" data-effort="${id}"><b>${x.label}</b><span>${x.hint}</span></button>`).join("")}
+        </div>
+      </section>`;
+
+      // ── Media relay ────────────────────────────────────────────────────
+      const med = mediaSettings;
+      const relayLine = lastRelay ? esc(ZSMediaRelay.describeOutcome(lastRelay)) : "No media relayed yet. Drop a photo or a video below.";
+      const relayOk = lastRelay && lastRelay.ok;
+      const mediaHtml = `<section class="zs-menu-sec zs-media-sec" data-zs-tab="appearance">
+        <div class="zs-sec-label"><span>Media relay</span><span class="zs-provider-badge">photo · video</span></div>
+        <div class="zs-menu-note">Send a screenshot, a photo or a clip into ${esc(P.displayName || P.id)} even when this site has no upload button or refuses the file. The relay carries it as a real paste, and for a video it extracts a few frames so the model can actually see what happened.</div>
+        <div class="zs-drop" id="ms-media-drop"><b>Drop a photo or video</b><span>or <u>choose a file</u> · png, jpg, gif, webp, bmp, mp4, webm, avi, mov</span></div>
+        <input id="ms-media-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp,video/mp4,video/webm,video/avi,video/quicktime" hidden>
+        <div class="zs-media-status ${relayOk ? "ok" : lastRelay ? "warn" : ""}" id="ms-media-status">${relayLine}</div>
+        <div class="zs-menu-actions"><button id="ms-media-paste" class="zs-mini-action" ${relayOk ? "" : "disabled"}>Paste into composer</button><button id="ms-media-clear" class="zs-mini-action">Clear</button></div>
+        <div class="zs-pref-row"><label><input id="ms-media-manifest" type="checkbox" ${med.sendManifest ? "checked" : ""}> Tell the model what was attached</label></div>
+        <div class="zs-pref-row"><label><input id="ms-media-release" type="checkbox" ${med.releaseAfterSend ? "checked" : ""}> Delete the file from the bridge after sending</label></div>
+      </section>`;
+      // ── Surface vision: tabs + desktop apps ───────────────────────────
+      // The agent can enumerate browser tabs and desktop windows, read a tab's
+      // text, and type into a tab. This panel is the user-facing half: it shows
+      // a live count of what is visible and lets them opt out of desktop
+      // scanning. Both toggles default ON because the capability is read-only
+      // unless the model explicitly calls a writing verb, and every writing verb
+      // is documented in its own tool description.
+      const surface = getSurfaceSettings();
+      const surfaceHtml = `<section class="zs-menu-sec zs-surface-sec" data-zs-tab="interface">
+        <div class="zs-sec-label"><span>Surface vision</span><span class="zs-provider-badge">tabs · windows</span></div>
+        <div class="zs-menu-note">${esc(P.displayName || P.id)} can look at your open browser tabs and your desktop windows, click between them, read a page, and type into a tab - so "fix the thing I have open" actually works. Reading is text only: no screenshots, no keystroke capture. Desktop windows come from the local bridge and are limited by what the OS exposes.</div>
+        <div class="zs-surface-grid">
+          <div class="zs-surface-stat"><b id="ms-surface-tabs">-</b><span>browser tabs</span></div>
+          <div class="zs-surface-stat"><b id="ms-surface-windows">-</b><span>desktop windows</span></div>
+        </div>
+        <div class="zs-menu-actions"><button id="ms-surface-refresh" class="zs-mini-action">Refresh</button><button id="ms-surface-plan" class="zs-mini-action">Unlock full desktop vision</button></div>
+        <div class="zs-media-status" id="ms-surface-status">Not scanned yet. Press Refresh to see what is open.</div>
+        <div class="zs-pref-row"><label><input id="ms-surface-tabs-toggle" type="checkbox" ${surface.tabs ? "checked" : ""}> Let the agent see browser tabs</label></div>
+        <div class="zs-pref-row"><label><input id="ms-surface-windows-toggle" type="checkbox" ${surface.windows ? "checked" : ""}> Let the agent see desktop windows</label></div>
+        <div class="zs-pref-row"><label><input id="ms-surface-read-toggle" type="checkbox" ${surface.allowRead ? "checked" : ""}> Allow reading a tab's text (read-only)</label></div>
+        <div class="zs-pref-row"><label><input id="ms-surface-type-toggle" type="checkbox" ${surface.allowType ? "checked" : ""}> Allow typing into a tab when asked</label></div>
+      </section>`;
+
       const figmaServer = allServers.find((x) => /figma/i.test(String(x.id || x.name || "")));
       const providerBehavior = getProviderBehavior();
-      const creativeSurfaceHtml = `<section class="zs-menu-sec" data-zs-tab="agent">
+      const creativeSurfaceHtml = `<section class="zs-menu-sec" data-zs-tab="studio">
         <div class="zs-sec-label"><span>Creative output</span><span class="zs-provider-badge">saved per provider</span></div>
         <div class="zs-menu-note">Choose where ${esc(P.displayName || P.id)} creates designs. Auto skips Canvas whenever building directly in Roblox Studio or another engine will produce the better usable result.</div>
         <div class="zs-choice-stack">
@@ -2950,7 +4341,7 @@
         </div>
         <div class="zs-menu-note"><b>Textures:</b> procedural SVG drawing remains available in every mode when the requested deliverable is a texture or decal.</div>
       </section>`;
-      const providerBehaviorHtml = `<section class="zs-menu-sec" data-zs-tab="agent">
+      const providerBehaviorHtml = `<section class="zs-menu-sec" data-zs-tab="studio">
         <div class="zs-sec-label"><span>${esc(P.displayName || P.id)} behavior</span><span class="zs-provider-badge">saved per provider</span></div>
         <div class="zs-setting-title">Prompt rewriting <span class="zs-provider-badge">skills always active</span></div>
         <div class="zs-choice-stack">
@@ -2967,7 +4358,7 @@
         </div>
         <div class="zs-menu-actions"><button id="ms-reset-agent-settings" class="zs-mini-action">Reset agent behavior</button></div>
       </section>`;
-      const qualityHtml = `<section class="zs-menu-sec" data-zs-tab="agent">
+      const qualityHtml = `<section class="zs-menu-sec" data-zs-tab="studio">
         <div class="zs-sec-label"><span>Studio skill coverage</span></div>
         <div class="zs-menu-note">Controls how many specialized skills and tools work together on each result. They improve their own game-development aspects directly; no generic multiplier replaces them.</div>
         <div class="zs-quality-grid">
@@ -2976,7 +4367,7 @@
         <div class="zs-economy-note">${skillDepth === "maximum" ? "Broadest relevant specialist mesh and deep craft passes." : skillDepth === "focused" ? "Core disciplines plus every directly relevant specialist." : "Broad professional studio coverage for every request."}</div>
       </section>`;
 
-      const usageHtml = `<section class="zs-menu-sec" data-zs-tab="agent">
+      const usageHtml = `<section class="zs-menu-sec" data-zs-tab="studio">
         <div class="zs-sec-label"><span>Usage optimizer</span></div>
         <div class="zs-menu-note">Automatically improves Multi-Script startup prompts and injected tool feedback for ${esc(P.displayName || P.id)}. Balanced is the safe default; Compact additionally minifies lossless JSON results and uses short system reminders.</div>
         <div class="zs-economy-grid">
@@ -2984,34 +4375,147 @@
         </div>
         <div class="zs-economy-note">${usageMode === "off" ? "No automatic optimization." : usageMode === "compact" ? "Lowest usage; correctness and full error evidence are preserved." : "Fewer repeated words and unnecessary calls, with normal detail when needed."}</div>
       </section>`;
+      // ── Reply pacing / error recovery / autonomy ────────────────────────────
+      // Three product behaviours, each with an honest one-line status so the
+      // user can see exactly what the loop will do before leaving it alone.
+      // Pacing can be scoped to THIS site only: the engine has always supported a
+      // per-provider override, and this is what makes it reachable ("slow down on
+      // the site that flags me, keep everything else instant").
+      const paceOverride = (getPaceSettings().perProvider || {})[P.id] || null;
+      const paceScoped = !!paceOverride;
+      const paceEffMode = (paceOverride && paceOverride.mode) || getPaceSettings().mode;
+      const pacingHtml = `<section class="zs-menu-sec" data-zs-tab="agent">
+        <div class="zs-sec-label"><span>Reply pacing</span><span class="zs-provider-badge">anti-flag</span></div>
+        <div class="zs-menu-note">Spaces the agent's turns the way a person would: a randomised gap, an occasional longer break, and a cooldown after any error or throttle. This is the main guard against a site flagging or rate-limiting the auto-reply. Pacing only changes WHEN a turn is sent, never what is sent, so correctness is untouched. Off restores the original instant behaviour.</div>
+        <div class="zs-choice-stack">
+          ${ZSPace.MODE_IDS.map((id) => { const m = ZSPace.MODES[id]; const active = paceEffMode === id; return `<button class="zs-behavior-opt${active ? " active" : ""}" data-pace-mode="${id}"><b>${m.label}</b><span>${m.hint}</span></button>`; }).join("")}
+        </div>
+        <div class="zs-pref-row"><label><input id="ms-pace-scope" type="checkbox" ${paceScoped ? "checked" : ""}> Apply only to <b>${esc(P.displayName || P.id)}</b> — leave every other site on the global setting</label></div>
+        <div class="zs-pref-row"><label><input id="ms-typing-sim" type="checkbox" ${getPaceSettings().typingSim ? "checked" : ""}> Simulate typing the composer fill (only takes effect in Cautious/Custom)</label></div>
+        <div class="zs-economy-note">${esc(paceDescription())}${paceScoped ? " · scoped to this site" : " · global"}</div>
+        <div class="zs-menu-actions"><button id="ms-pace-test" class="zs-mini-action">Test pacing</button></div>
+      </section>`;
+
+      const verificationHtml = `<section class="zs-menu-sec" data-zs-tab="agent">
+        <div class="zs-sec-label"><span>Verification handling</span><span class="zs-provider-badge">no bypass</span></div>
+        <div class="zs-menu-note">What the run does when the site puts a bot-check in the way. Multi-Script never solves, answers, token-injects or outsources a CAPTCHA - that is a bypass and risks the account. Instead it pauses, moves its own controls off the widget, can click the site's <b>own</b> widget once (exactly what a human does), alerts you if you are in another tab, resumes by itself when the check clears, and spaces later messages further apart so the check stops coming back.</div>
+        <div class="zs-choice-stack">
+          ${ZSVerify.MODE_IDS.map((id) => { const m = ZSVerify.MODES[id]; const active = vmode().id === id; return `<button class="zs-behavior-opt${active ? " active" : ""}" data-verify="${id}"><b>${m.label}</b><span>${m.describe}</span></button>`; }).join("")}
+        </div>
+        <div class="zs-economy-note">${esc(ZSVerify.describe(getVerificationSettings(), P.id))}</div>
+        <label class="zs-menu-toggle"><input type="checkbox" id="zs-verify-audible" ${getVerificationSettings().audibleAlert ? "checked" : ""}> <span>Alert me when a check is waiting (tone + tab title)</span></label>
+        <div class="zs-economy-note">${A.verifyState && A.verifyState.floorMs ? `Currently spacing messages ${Math.round(A.verifyState.floorMs / 1000)}s further apart after a check.` : esc(ZSVerify.COPY.whyManual)}</div>
+      </section>`;
+
+      const reliabilityHtml = `<section class="zs-menu-sec" data-zs-tab="agent">
+        <div class="zs-sec-label"><span>Error recovery</span><span class="zs-provider-badge">unattended</span></div>
+        <div class="zs-menu-note">What happens when a turn comes back empty, times out, or is not one valid command. Standard recovers from a one-off hiccup; Persistent keeps a long unattended run alive through repeated stalls and widens the patience windows. A retry only ever re-asks the model - it can never invent a result.</div>
+        <div class="zs-choice-stack">
+          ${ZSResilience.LEVEL_IDS.map((id) => { const l = ZSResilience.LEVELS[id]; const active = getResilienceSettings().level === id; return `<button class="zs-behavior-opt${active ? " active" : ""}" data-recovery="${id}"><b>${l.label}</b><span>${l.hint}</span></button>`; }).join("")}
+        </div>
+        <div class="zs-economy-note">${esc(ZSResilience.describe(getResilienceSettings(), P.id))}</div>
+      </section>`;
+
+      const autonomyHtml = `<section class="zs-menu-sec" data-zs-tab="agent">
+        <div class="zs-sec-label"><span>Autonomy</span><span class="zs-provider-badge">saved globally</span></div>
+        <div class="zs-menu-note">One-shot turns a pasted design specification into an uninterrupted build: no clarifying questions, no stopping at a checkpoint, and it keeps working through as many commands as the spec needs. It only stops for a choice that is destructive, costs money, needs credentials, or is genuinely contradictory.</div>
+        <div class="zs-choice-stack">
+          ${ZS.AUTONOMY_IDS.map((id) => { const a = ZS.AUTONOMY_LEVELS[id]; const active = getAutonomyLevel() === id; return `<button class="zs-behavior-opt${active ? " active" : ""}" data-autonomy="${id}"><b>${a.label}</b><span>${a.hint}</span></button>`; }).join("")}
+        </div>
+        <div class="zs-economy-note">${getAutonomyLevel() === "oneShot" ? "One-shot is on: the agent will not ask you anything it can decide itself." : "Guided: the agent may pause or ask about a real ambiguity."}</div>
+      </section>`;
+
+      const notionTabHtml = notionTabMarkup();
       const notionProfiles = P.autoRoutingProfiles ? P.autoRoutingProfiles() : [];
       const activeNotionProfile = P.getAutoRoutingProfile ? P.getAutoRoutingProfile() : "";
       const profileProviderLabel = P.id === "arena" ? "Arena Direct Max" : "Notion Auto";
-      const profileBoundary = P.id === "arena" ? "The adaptive profile classifies every outgoing turn and asks Arena Direct Max to use its strongest legitimately available model for that turn. Multi-Script never clicks the picker, guarantees a backend model, or bypasses plans, quotas, verification, availability, or access." : "to use it free, you need a business trial. Multi-Script does not bypass subscriptions, Business-trial requirements, plan limits, or Notion’s model picker.";
+      const profileBoundary = P.id === "arena" ? "Direct Max profiles are optional. Pick one to send its routing request, or choose Off — Normal Arena to send no Direct Max starter block and no per-turn model-routing envelope. Normal engine sessions and engine-free Chat Studio still keep their usual Multi-Script skills and tools. It never clicks the picker, falsely guarantees the backend, or bypasses plans, quotas, verification, availability, or access." : "to use it free, you need a business trial. Multi-Script does not bypass subscriptions, Business-trial requirements, plan limits, or Notion’s model picker.";
       const notionProfileHtml = notionProfiles.length ?
-        `<section class="zs-menu-sec zs-notion-model-sec" data-zs-tab="agent">
+        `<section class="zs-menu-sec zs-notion-model-sec" data-zs-tab="${P.id === "notion" ? "notion" : "agent"}">
           <div class="zs-sec-label"><span>${P.id === "arena" ? `${profileProviderLabel} routing profile` : `${profileProviderLabel} preferred model`}</span><span class="zs-provider-badge">prompt-only</span></div>
-          <div class="zs-menu-note">${profileBoundary} ${P.id === "arena" ? "The startup contract is placed once, and the adaptive profile adds a compact capability signal to each turn so Arena can re-route as the task changes." : "The request is placed once at the top of each new chat; the full shared Multi-Script studio prompt follows unchanged. If unavailable, the provider must use its best legitimately available model without impersonation."}</div>
+          <div class="zs-menu-note">${profileBoundary} ${P.id === "arena" ? "When enabled, the startup contract is placed once and compact targeting is sent each turn. When disabled, Arena starts normally like before while engine-connected and engine-free modes continue to work." : "The request is placed once at the top of each new chat; the full shared Multi-Script studio prompt follows unchanged. If unavailable, the provider must use its best legitimately available model without impersonation."}</div>
           <div class="zs-profile-grid">
             ${notionProfiles.map((x) => `<button class="zs-behavior-opt zs-profile-opt${activeNotionProfile === x.id ? " active" : ""}" data-profile="${x.id}"><b>${x.label}</b><span>${x.description}</span></button>`).join("")}
-            <button class="zs-profile-opt${!activeNotionProfile ? " active" : ""}" data-profile="">Standard Auto</button>
+            <button class="zs-behavior-opt zs-profile-opt${!activeNotionProfile ? " active" : ""}" data-profile=""><b>${P.id === "arena" ? "Off — Normal Arena" : "Standard Auto"}</b><span>${P.id === "arena" ? "No Direct Max starter profile or per-turn routing envelope. Keeps normal engine and engine-free startup." : "Use the provider’s standard automatic behavior."}</span></button>
           </div>
           <div class="zs-menu-actions"><button id="zs-check-profile" class="zs-mini-action">Check selection</button><button id="zs-copy-profile" class="zs-mini-action" ${activeNotionProfile ? "" : "disabled"}>Copy routing request</button></div>
           <div id="zs-profile-status" class="zs-menu-note"></div>
         </section>` : "";
 
+      const setupEngines = (A.bridge && Array.isArray(A.bridge.engines) ? A.bridge.engines : []);
+      const setupConnected = setupEngines.filter((x) => x && x.connected === true);
+      const setupTutorialHtml = `
+        <section class="zs-menu-sec zs-tutorial-hero" data-zs-tab="setup">
+          <div class="zs-sec-label"><span>Set up Multi-Script</span><span class="zs-provider-badge">start here</span></div>
+          <div class="zs-menu-note">Multi-Script is a browser control layer plus a local bridge. The AI chat writes one JSON command, the extension sends it to the bridge, and the bridge calls the real tools advertised by your connected MCP servers. It does not replace Notion with Connectors and it does not invent extra native tools.</div>
+          <div class="zs-tutorial-status">
+            <span class="${A.bridge && A.bridge.connected ? "ok" : ""}">${A.bridge && A.bridge.connected ? "✓ Bridge online" : "1 Bridge offline · click the terminal icon"}</span>
+            <span class="${setupConnected.length ? "ok" : ""}">${setupConnected.length ? `✓ ${setupConnected.map((x) => esc(x.id || "engine")).join(" + ")} connected` : "2 Connect an editor"}</span>
+            <span class="${P.getEditor && P.getEditor() ? "ok" : ""}">${P.getEditor && P.getEditor() ? `✓ ${esc(P.displayName || P.id)} composer found` : `3 Open ${esc(P.displayName || P.id)} chat`}</span>
+          </div>
+          <div class="zs-menu-actions"><button id="ms-setup-check" class="zs-mini-action">Run setup check</button><button id="ms-copy-setup" class="zs-mini-action">Copy checklist</button></div>
+        </section>
+        <section class="zs-menu-sec" data-zs-tab="setup">
+          <div class="zs-sec-label"><span>1 · Install the complete release</span></div>
+          <ol class="zs-tutorial-list">
+            <li>Extract the full ZIP. Do not run it from inside the ZIP preview.</li>
+            <li>Open <b>chrome://extensions</b> or <b>edge://extensions</b>, enable Developer mode, choose <b>Load unpacked</b>, and select the extracted <b>extension</b> folder.</li>
+            <li>After updating Multi-Script, press <b>Reload</b> on its extension card. A new host such as <b>app.notion.com</b> needs the updated permission before injection can work.</li>
+          </ol>
+        </section>
+        <section class="zs-menu-sec" data-zs-tab="setup">
+          <div class="zs-sec-label"><span>2 · Start the local bridge</span></div>
+          <ol class="zs-tutorial-list">
+            <li><b>One time only:</b> double-click <b>Setup.bat</b> (Windows) or run <b>MacOS_Setup.command</b> (macOS/Linux). It registers a tiny launcher with your browser.</li>
+            <li>Fully restart the browser once. From then on the bridge starts <b>by itself</b> when a chat opens - or click the <b>terminal icon</b> in the bar.</li>
+            <li>The icon's panel is the live terminal: log, Start / Stop / Restart, and a <b>Running</b> tab listing the bridge, engines and open apps.</li>
+          </ol>
+        </section>
+        <section class="zs-menu-sec" data-zs-tab="setup">
+          <div class="zs-sec-label"><span>3 · Connect your real editor or MCP server</span></div>
+          <div class="zs-menu-note"><b>Roblox Studio:</b> open a place, then enable its MCP server from Studio’s Assistant/MCP settings. <b>Unity/Godot:</b> use the bundled launcher and open the target project. <b>Blender/Figma/other MCP:</b> copy the verified stdio launch command from that server’s documentation into the Engines category. The bridge exposes exactly what each live server advertises.</div>
+          <div class="zs-menu-actions"><button class="zs-mini-action" data-go-tab="engines">Open Engines setup</button></div>
+        </section>
+        <section class="zs-menu-sec" data-zs-tab="setup">
+          <div class="zs-sec-label"><span>4 · Open the correct AI chat</span></div>
+          <div class="zs-menu-note">For Notion, use <b>https://app.notion.com/chat</b>. The old notion.so root can open workspace settings or Connectors, which is not the Multi-Script chat surface. In a fresh Notion chat, look for the <b>Ask anything</b> composer; Multi-Script should mount beside it after the extension is reloaded.</div>
+          <button class="zs-tip-opt" data-u="https://app.notion.com/chat"><span>Open Notion AI chat</span><span class="zs-tip-sub">app.notion.com/chat</span></button>
+        </section>
+        <section class="zs-menu-sec" data-zs-tab="setup">
+          <div class="zs-sec-label"><span>5 · Start and verify a session</span></div>
+          <ol class="zs-tutorial-list">
+            <li>Return to the chat and press <b>Start</b> in the Multi-Script bar.</li>
+            <li>Choose the connected engine, or use engine-free Chat Studio for prompt-only work.</li>
+            <li>Send a small read-only request first. Confirm the command chip, bridge result, and project read-back before a large build.</li>
+          </ol>
+        </section>
+        <section class="zs-menu-sec" data-zs-tab="setup">
+          <div class="zs-sec-label"><span>Settings map</span></div>
+          <div class="zs-menu-note"><b>Agent</b> controls prompt enhancement, effort, autonomy, pacing, recovery, verification, tools and appearance. <b>Engines</b> manages bridge health and MCP launch commands. <b>AI sites</b> switches provider. <b>Help</b> contains backups, diagnostics and troubleshooting. Settings never add provider entitlements or bypass plan limits.</div>
+        </section>`;
+
       menuEl.innerHTML =
         `<div class="zs-menu-head"><span class="zs-menu-logo">Multi-Script</span><span class="zs-menu-tag">v${EXT_VERSION}</span><span class="zs-menu-health ${A.bridge && A.bridge.connected ? "on" : "off"}">${A.bridge && A.bridge.connected ? "online" : "offline"}</span></div>
          <div class="zs-menu-tabs" role="tablist">
-           <button data-tab="agent">Agent</button><button data-tab="engines">Engines</button><button data-tab="sites">AI sites</button><button data-tab="help">Help</button>
+           <button data-tab="setup">Setup</button><button data-tab="appearance">Appearance</button><button data-tab="studio">Studio</button><button data-tab="agent">Agent</button>${P.id === "notion" ? `<button data-tab="notion">Notion</button>` : ""}<button data-tab="interface">Interface</button><button data-tab="engines">Engines</button><button data-tab="sites">AI sites</button><button data-tab="help">Help</button>
          </div>
+         ${setupTutorialHtml}
          ${menuPrefs.showOverview ? overviewHtml : ""}
          ${appearanceHtml}
-         ${creativeSurfaceHtml}
+         ${mediaHtml}
          ${providerBehaviorHtml}
+         ${creativeSurfaceHtml}
+         ${effortHtml}
          ${qualityHtml}
+         ${enhanceHtml}
          ${usageHtml}
+         ${notionTabHtml}
          ${notionProfileHtml}
+         ${autonomyHtml}
+         ${verificationHtml}
+         ${reliabilityHtml}
+         ${pacingHtml}
+         ${surfaceHtml}
          <section class="zs-menu-sec" data-zs-tab="sites">
            <div class="zs-sec-label"><span>Switch AI</span></div>
            ${sites}
@@ -3028,7 +4532,7 @@
            <div class="zs-tip-sep">or tip in Robux</div>
            <div class="zs-rbx-grid">${passes}</div>
          </section>
-         <section class="zs-menu-sec zs-elevenlabs-sec" data-zs-tab="agent">
+         <section class="zs-menu-sec zs-elevenlabs-sec" data-zs-tab="interface">
            <div class="zs-sec-label"><span>Audio generation</span><span class="zs-secret-state ${elevenLabsState.configured ? "on" : "off"}">${elevenLabsState.loading ? "checking" : elevenLabsState.elevenLabsConfigured ? "local + cloud" : "local ready"}</span></div>
            <div class="zs-menu-note">Free local sound generation is ready without an account, network request, or API key. ElevenLabs remains an optional cloud-quality provider: if supplied, its key is sent only to the local bridge, stored in <b>runtime/.env</b> with private permissions, and never saved in browser storage, prompts, chats, diagnostics, or release ZIPs.</div>
            <div class="zs-secret-field"><input id="ms-elevenlabs-key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your own ElevenLabs API key"><button id="ms-elevenlabs-reveal" class="zs-mini-action" type="button">Show</button></div>
@@ -3040,6 +4544,13 @@
            <div class="zs-menu-note">Added below the system prompt on every new session. The built-in prompt can't be edited.</div>
            <textarea id="zs-set-text" rows="4" placeholder="e.g. Always comment your Luau code. Prefer small modular scripts."></textarea>
            <div class="zs-set-row"><button id="zs-set-save">Save</button><span id="zs-set-status"></span></div>
+         </section>
+         <section class="zs-menu-sec" data-zs-tab="engines">
+           <div class="zs-sec-label"><span>Bridge</span><span class="zs-provider-badge" id="zs-br-badge">${A.bridge && A.bridge.connected ? "online" : "offline"}</span></div>
+           <div class="zs-menu-note">The terminal icon in the chat bar runs the bridge for you — no .bat file to keep open. Its caret lists everything running (bridge, MCP servers, engine apps).</div>
+           <div class="zs-menu-actions"><button id="zs-br-open" class="zs-mini-action">Open terminal</button><button id="zs-br-start" class="zs-mini-action">Start</button><button id="zs-br-restart" class="zs-mini-action">Restart</button><button id="zs-br-stop" class="zs-mini-action">Stop</button></div>
+           <label class="zs-pref-row"><input id="zs-br-auto" type="checkbox"> Start it automatically when an AI site opens</label>
+           <div id="zs-br-status" class="zs-menu-note"></div>
          </section>
          <section class="zs-menu-sec" data-zs-tab="engines">
            <div class="zs-sec-label"><span>Engines & MCP servers</span></div>
@@ -3063,7 +4574,7 @@
          </section>`;
       const open = (url) => { try { window.open(url, "_blank", "noopener"); } catch {} menuEl.hidden = true; };
       const applyMenuTab = (tab) => {
-        menuTab = tab || "agent";
+        menuTab = (tab === "notion" && P.id !== "notion") ? "studio" : (tab || "agent");
         menuEl.querySelectorAll("[data-zs-tab]").forEach((el) => { el.hidden = el.dataset.zsTab !== menuTab; });
         menuEl.querySelectorAll(".zs-menu-tabs button").forEach((b) => {
           const active = b.dataset.tab === menuTab; b.classList.toggle("active", active); b.setAttribute("aria-selected", active ? "true" : "false");
@@ -3072,6 +4583,36 @@
       };
       menuEl.querySelectorAll(".zs-menu-tabs button").forEach((b) => b.addEventListener("click", () => applyMenuTab(b.dataset.tab)));
       applyMenuTab(menuTab);
+      menuEl.querySelectorAll("[data-go-tab]").forEach((b) => b.addEventListener("click", () => applyMenuTab(b.dataset.goTab)));
+      bindNotionTab();
+      bindBridgeSection();
+      const setupCheck = menuEl.querySelector("#ms-setup-check");
+      if (setupCheck) setupCheck.addEventListener("click", async () => {
+        setupCheck.disabled = true;
+        const status = await bg({ type: "status" });
+        const provider = P.selfTest ? P.selfTest() : { ready: !!(P.getEditor && P.getEditor()) };
+        const engines = (status && Array.isArray(status.engines) ? status.engines : []).filter((x) => x && x.connected === true);
+        const lines = [
+          `Bridge: ${status && status.connected ? "online" : "offline — click the terminal icon in the bar to start it"}`,
+          `Editor/MCP: ${engines.length ? engines.map((x) => x.id).join(", ") + " connected" : "none connected — open the editor and enable its MCP server"}`,
+          `${P.displayName || P.id}: ${provider.ready ? "composer detected" : (provider.recommendation || "composer not detected")}`,
+        ];
+        ui.banner(status && status.connected && provider.ready ? "ok" : "warn", "Multi-Script setup check", lines.join("\n"));
+        setupCheck.disabled = false;
+      });
+      const copySetup = menuEl.querySelector("#ms-copy-setup");
+      if (copySetup) copySetup.addEventListener("click", async () => {
+        const text = [
+          "Multi-Script setup checklist",
+          "1. Extract the full release ZIP.",
+          "2. Load the extension folder at chrome://extensions or edge://extensions, then reload the extension after updates.",
+          "3. One time only: run Setup.bat (Windows) or MacOS_Setup.command (macOS/Linux) so the terminal icon can start the bridge. After that, just click the terminal icon in the chat bar.",
+          "4. Open the target editor/project and enable its MCP server, or add its verified stdio command under Engines.",
+          "5. For Notion AI open https://app.notion.com/chat — not workspace Connectors.",
+          "6. Press Start in the Multi-Script bar and run a small read-only check first.",
+        ].join("\n");
+        try { await navigator.clipboard.writeText(text); toast("Setup checklist copied"); } catch { toast("Could not copy setup checklist"); }
+      });
       const defaultTabSelect = menuEl.querySelector("#ms-default-tab");
       if (defaultTabSelect) { defaultTabSelect.value = menuPrefs.defaultTab; defaultTabSelect.addEventListener("change", () => { menuPrefs.defaultTab = defaultTabSelect.value; saveMenuPrefs(); }); }
       const showOverview = menuEl.querySelector("#ms-show-overview");
@@ -3085,29 +4626,134 @@
       const saveIdentity=menuEl.querySelector("#ms-save-identity"); if(saveIdentity) saveIdentity.addEventListener("click",()=>{ menuPrefs.brandIcon=(menuEl.querySelector("#ms-brand-icon").value||"✦").slice(0,3); menuPrefs.brandName=(menuEl.querySelector("#ms-brand-name").value.trim()||"Multi-Script").slice(0,28); menuPrefs.tagline=menuEl.querySelector("#ms-brand-tagline").value.trim().slice(0,60); saveMenuPrefs(); buildMenu(); toast("Identity saved"); });
       const resetMenu = menuEl.querySelector("#ms-reset-menu");
       if (resetMenu) resetMenu.addEventListener("click", () => { menuPrefs = { ...DEFAULT_MENU_PREFS }; menuTab = "agent"; saveMenuPrefs(); buildMenu(); toast("Menu reset"); });
+      bindEnhancePanel(menuEl);
+      bindMediaPanel(menuEl);
+      bindSurfacePanel(menuEl);
       const resetAgentSettings=menuEl.querySelector("#ms-reset-agent-settings");
-      if(resetAgentSettings) resetAgentSettings.addEventListener("click",()=>{ providerBehaviorMap[P.id]={...DEFAULT_PROVIDER_BEHAVIOR}; skillDepth="full"; usageMode="balanced"; try{chrome.storage.local.set({msProviderBehavior:providerBehaviorMap,zsSkillToolDepth:skillDepth,zsUsageOptimizer:usageMode});}catch{} menuTab="agent"; buildMenu(); toast(`${P.displayName||P.id}: agent behavior reset`); });
+      if(resetAgentSettings) resetAgentSettings.addEventListener("click",()=>{ providerBehaviorMap[P.id]={...DEFAULT_PROVIDER_BEHAVIOR}; skillDepth="full"; usageMode="balanced"; paceSettings=ZSPace.sanitize(ZSPace.DEFAULT_SETTINGS); resilienceSettings=ZSResilience.sanitize(ZSResilience.DEFAULT_SETTINGS); verificationSettings=ZSVerify.sanitize(ZSVerify.DEFAULT_SETTINGS); A.verifyState=ZSVerify.initialState(); autonomyLevel="guided"; try{chrome.storage.local.set({msProviderBehavior:providerBehaviorMap,zsSkillToolDepth:skillDepth,zsUsageOptimizer:usageMode,msPacingSettings:paceSettings,msResilienceSettings:resilienceSettings,msVerificationSettings:verificationSettings,zsAutonomyLevel:autonomyLevel});}catch{} buildMenu(); toast(`${P.displayName||P.id}: agent behavior reset`); });
       menuEl.querySelectorAll("[data-creative-surface]").forEach((b) => b.addEventListener("click", () => {
-        setProviderBehavior({ creativeSurface: b.dataset.creativeSurface }); menuTab = "agent"; buildMenu(); toast(`${P.displayName || P.id}: ${b.dataset.creativeSurface} creative routing`);
+        setProviderBehavior({ creativeSurface: b.dataset.creativeSurface }); buildMenu(); toast(`${P.displayName || P.id}: ${b.dataset.creativeSurface} creative routing`);
       }));
             menuEl.querySelectorAll("[data-prompt-skills]").forEach((b) => b.addEventListener("click", () => {
-        setProviderBehavior({ promptSkills: b.dataset.promptSkills }); menuTab = "agent"; buildMenu(); toast(`${P.displayName || P.id}: prompt rewriting ${b.dataset.promptSkills}`);
+        setProviderBehavior({ promptSkills: b.dataset.promptSkills }); buildMenu(); toast(`${P.displayName || P.id}: prompt rewriting ${b.dataset.promptSkills}`);
       }));
       menuEl.querySelectorAll("[data-loop-mode]").forEach((b) => b.addEventListener("click", () => {
-        setProviderBehavior({ loops: b.dataset.loopMode }); menuTab = "agent"; buildMenu(); toast(`${P.displayName || P.id}: ${b.dataset.loopMode} production`);
+        setProviderBehavior({ loops: b.dataset.loopMode }); buildMenu(); toast(`${P.displayName || P.id}: ${b.dataset.loopMode} production`);
       }));
       menuEl.querySelectorAll(".zs-quality-opt").forEach((b) => b.addEventListener("click", () => {
         skillDepth = b.dataset.skillDepth || "full";
         try { chrome.storage.local.set({ zsSkillToolDepth: skillDepth }); } catch {}
-        menuTab = "agent"; buildMenu(); toast(`Studio skill coverage: ${skillDepth}`);
+        buildMenu(); toast(`Studio skill coverage: ${skillDepth}`);
       }));
       menuEl.querySelectorAll(".zs-economy-opt").forEach((b) => b.addEventListener("click", () => {
         usageMode = b.dataset.economy || "balanced";
         try { chrome.storage.local.set({ zsUsageOptimizer: usageMode }); } catch {}
-        menuTab = "agent"; buildMenu(); toast(`Usage optimizer: ${usageMode}`);
+        buildMenu(); toast(`Usage optimizer: ${usageMode}`);
+      }));
+      // Reply pacing: mode presets. Changing the mode re-derives the effective
+      // profile for THIS provider immediately (no reload, no restart). When the
+      // scope toggle is on, the choice is stored as a per-provider override so
+      // the other sites keep the global setting.
+      menuEl.querySelectorAll("[data-pace-mode]").forEach((b) => b.addEventListener("click", () => {
+        const mode = b.dataset.paceMode;
+        const s = getPaceSettings();
+        const scoped = !!(s.perProvider || {})[P.id];
+        if (scoped) setPaceSettings({ perProvider: { ...s.perProvider, [P.id]: { ...s.perProvider[P.id], mode } } });
+        else setPaceSettings({ mode });
+        buildMenu();
+        toast(`Reply pacing: ${(ZSPace.MODES[mode] || {}).label || mode}${scoped ? ` (${P.displayName || P.id} only)` : ""}`);
+      }));
+      const paceScopeEl = menuEl.querySelector("#ms-pace-scope");
+      if (paceScopeEl) paceScopeEl.addEventListener("change", () => {
+        const s = getPaceSettings();
+        const per = { ...(s.perProvider || {}) };
+        if (paceScopeEl.checked) per[P.id] = { mode: s.mode === "custom" ? "human" : s.mode };
+        else delete per[P.id];
+        setPaceSettings({ perProvider: per });
+        buildMenu();
+        toast(paceScopeEl.checked
+          ? `Pacing scoped to ${P.displayName || P.id} (other sites unchanged)`
+          : "Pacing follows the global setting again");
+      });
+      const typingSimEl = menuEl.querySelector("#ms-typing-sim");
+      if (typingSimEl) typingSimEl.addEventListener("change", () => {
+        setPaceSettings({ typingSim: typingSimEl.checked });
+        buildMenu();
+      });
+      // In-browser pacing check: runs the SAME engine the loop uses over a
+      // simulated session and reports the real numbers, so "is the pacing
+      // actually doing something on my machine" is answerable without reading
+      // code or watching a live run.
+      const paceTestEl = menuEl.querySelector("#ms-pace-test");
+      if (paceTestEl) paceTestEl.addEventListener("click", () => {
+        const s = getPaceSettings();
+        const prof = ZSPace.profileFor(s, P.id);
+        if (ZSPace.isOff(prof)) {
+          ui.banner("warn", "Pacing is off",
+            "Turns are sent immediately, as before. Pick Brisk, Human-like or Cautious to add a randomised gap, a periodic longer break and an error cooldown.");
+          return;
+        }
+        const seq = ZSPace.planSequence(s, P.id, 30);
+        const st = ZSPace.stats(seq);
+        const secs = (ms) => `${(ms / 1000).toFixed(1)}s`;
+        const mmss = (ms) => `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
+        const longBreaks = seq.filter((_, i) => prof.longEvery > 0 && i > 0 && i % prof.longEvery === 0).length;
+        const rl = ZSResilience.policy(rlevel());
+        ui.banner("ok", `Pacing check · ${(ZSPace.MODES[s.mode] || {}).label || s.mode}`,
+          `30 simulated turns → mean ${secs(st.mean)}, min ${secs(st.min)}, max ${secs(st.max)}, ` +
+          `${longBreaks} longer break${longBreaks === 1 ? "" : "s"}.\n` +
+          `A 30-step unattended run (≈60 sends) would add about ${mmss(st.totalMs * 2)}.\n` +
+          `${prof.errorCooldownMs > 0 ? `After any error the next turn waits at least ${secs(prof.errorCooldownMs)}. ` : ""}` +
+          `Error recovery: ${rl.label}${rl.maxRetries ? ` · up to ${rl.maxRetries} retries per failure, gives up after ${rl.maxConsecutive} in a row` : " · a failure ends the run"}.`);
+      });
+      // Error recovery level.
+      menuEl.querySelectorAll("[data-recovery]").forEach((b) => b.addEventListener("click", () => {
+        const level = b.dataset.recovery;
+        setResilienceSettings({ level });
+        buildMenu();
+        toast(`Error recovery: ${(ZSResilience.LEVELS[level] || {}).label || level}`);
+      }));
+      // Verification handling mode. Selecting a mode that can activate the
+      // assisted click also states the hard limit in the toast, so the boundary
+      // is never a surprise later.
+      menuEl.querySelectorAll("[data-verify]").forEach((b) => b.addEventListener("click", () => {
+        const id = b.dataset.verify;
+        const m = setVerificationSettings({ mode: id });
+        const applied = ZSVerify.modeFor(m, P.id);
+        if (applied.id === "assist" || applied.id === "unattended") {
+          // Reset the adaptive floor when the user changes intent, so a previous
+          // bad patch does not slow a deliberate new setting.
+          A.verifyState = ZSVerify.initialState();
+        }
+        buildMenu();
+        toast(`Verification: ${applied.label}${applied.assist ? " · clicks the site's own widget once, never solves it" : ""}`);
+      }));
+      const verifyAudible = menuEl.querySelector("#zs-verify-audible");
+      if (verifyAudible) verifyAudible.addEventListener("change", () => {
+        setVerificationSettings({ audibleAlert: !!verifyAudible.checked });
+        toast(verifyAudible.checked ? "Verification alert: on" : "Verification alert: off");
+      });
+      // Autonomy. One-shot is only genuinely one-shot if it can survive stalls
+      // and is not the thing that gets flagged, so selecting it raises those two
+      // floors unless the user has deliberately chosen something else.
+      menuEl.querySelectorAll("[data-autonomy]").forEach((b) => b.addEventListener("click", () => {
+        const lvl = setAutonomyLevel(b.dataset.autonomy);
+        if (lvl === "oneShot") {
+          if (getResilienceSettings().level !== "persistent") setResilienceSettings({ level: "persistent" });
+          if (getPaceSettings().mode === "off") setPaceSettings({ mode: "human" });
+          toast("One-shot: no questions · persistent recovery · human pacing");
+        } else {
+          toast("Autonomy: guided");
+        }
+        buildMenu();
+      }));
+      menuEl.querySelectorAll("[data-effort]").forEach((b) => b.addEventListener("click", () => {
+        const id = setExecutionEffort(b.dataset.effort);
+        buildMenu();
+        toast(`Execution effort: ${EXECUTION_EFFORTS[id].label}`);
       }));
       const checkProfile = menuEl.querySelector("#zs-check-profile");
-      if (checkProfile) checkProfile.addEventListener("click", () => { const d=P.routingProfileDiagnostics ? P.routingProfileDiagnostics() : null; const st=menuEl.querySelector("#zs-profile-status"); if(st) st.textContent=d && d.promptReady ? (d.perTurnRouting ? `Adaptive routing ready · re-evaluates every turn · ${d.dynamicCapabilities.length} capability signals · no direct picker` : `Prompt routing ready · requests ${d.requestedModel} · no direct picker · sent once per new chat`) : "Standard Auto · no routing request"; });
+      if (checkProfile) checkProfile.addEventListener("click", () => { const d=P.routingProfileDiagnostics ? P.routingProfileDiagnostics() : null; const st=menuEl.querySelector("#zs-profile-status"); if(st) st.textContent=d && d.promptReady ? (d.modelTargeted ? `Model-targeted routing ready · requests exact ${d.requestedModel} every turn · ${d.dynamicCapabilities.length} capability signals · no direct picker` : d.perTurnRouting ? `Untargeted Direct Max ready · re-evaluates every turn · no direct picker` : `Prompt routing ready · no direct picker`) : "Standard Auto · no routing request"; });
             const copyProfile = menuEl.querySelector("#zs-copy-profile");
       if (copyProfile) copyProfile.addEventListener("click", async () => {
         const text = P.getStartupProfilePrompt ? P.getStartupProfilePrompt() : "";
@@ -3139,7 +4785,7 @@
       });
       const copyDiag = menuEl.querySelector("#zs-copy-diagnostics");
       if (copyDiag) copyDiag.addEventListener("click", async () => {
-        const safe = { product:"Multi-Script", version:EXT_VERSION, zeroScriptBase:true, provider:P.id, urlHost:location.hostname, bridgeConnected:!!(A.bridge&&A.bridge.connected), servers:(A.bridge&&A.bridge.servers)||[], engines:(A.bridge&&A.bridge.engines)||[], advertisedTools:A.toolList.length, started:A.started, starting:A.starting, effectiveSettings:{ schema:SETTINGS_BACKUP_SCHEMA, providerBehavior:getProviderBehavior(), specialistDepth:skillDepth, usageOptimizer:usageMode, creativeSurface:getProviderBehavior().creativeSurface, customInstructionsConfigured:!!customPrompt.trim(), appearance:{theme:menuPrefs.theme,density:menuPrefs.density,width:menuPrefs.width,scale:menuPrefs.scale,motion:menuPrefs.motion}, starterRouting:P.routingProfileDiagnostics?P.routingProfileDiagnostics():null, localAudioReady:!!elevenLabsState.configured, elevenLabsConfigured:!!elevenLabsState.elevenLabsConfigured, customMcpServerCount:customMcpServers.length } };
+        const safe = { product:"Multi-Script", version:EXT_VERSION, zeroScriptBase:true, provider:P.id, urlHost:location.hostname, bridgeConnected:!!(A.bridge&&A.bridge.connected), servers:(A.bridge&&A.bridge.servers)||[], engines:(A.bridge&&A.bridge.engines)||[], advertisedTools:A.toolList.length, started:A.started, starting:A.starting, effectiveSettings:{ schema:SETTINGS_BACKUP_SCHEMA, providerBehavior:getProviderBehavior(), specialistDepth:skillDepth, usageOptimizer:usageMode, creativeSurface:getProviderBehavior().creativeSurface, promptEnhancer:ZSEnhance.sanitize(enhanceSettings), executionEffort, pacing:ZSPace.sanitize(paceSettings), pacingSummary:paceDescription(), errorRecovery:ZSResilience.sanitize(resilienceSettings), errorRecoverySummary:ZSResilience.describe(resilienceSettings, P.id), verification:ZSVerify.sanitize(verificationSettings), verificationSummary:ZSVerify.describe(verificationSettings, P.id), verificationSeen:A.verifyCount||0, autonomy:autonomyLevel, customInstructionsConfigured:!!customPrompt.trim(), appearance:{theme:menuPrefs.theme,density:menuPrefs.density,width:menuPrefs.width,scale:menuPrefs.scale,motion:menuPrefs.motion}, starterRouting:P.routingProfileDiagnostics?P.routingProfileDiagnostics():null, localAudioReady:!!elevenLabsState.configured, elevenLabsConfigured:!!elevenLabsState.elevenLabsConfigured, customMcpServerCount:customMcpServers.length } };
         try { await navigator.clipboard.writeText(JSON.stringify(safe, null, 2)); toast("Diagnostics copied"); } catch { toast("Could not copy diagnostics"); }
       });
       const reloadPage = menuEl.querySelector("#zs-reload-page");
@@ -3149,10 +4795,10 @@
       menuEl.querySelectorAll(".zs-profile-opt").forEach((b) => b.addEventListener("click", () => {
         if (!P.setAutoRoutingProfile) return;
         const selected = P.setAutoRoutingProfile(b.dataset.profile || "");
-        menuTab = "agent";
+        menuTab = P.id === "notion" ? "notion" : "agent";
         buildMenu();
         const st = menuEl.querySelector("#zs-profile-status");
-        if (st) { const d=P.routingProfileDiagnostics ? P.routingProfileDiagnostics() : null; st.textContent = selected ? `Saved for the next new chat · ${d && d.requestedModel ? `requests ${d.requestedModel}` : "routing request ready"} · sent once` : "Standard Auto saved for the next new chat."; }
+        if (st) { const d=P.routingProfileDiagnostics ? P.routingProfileDiagnostics() : null; st.textContent = selected ? `Saved for the next new chat · ${d && d.requestedModel ? `requests ${d.requestedModel}` : "routing request ready"} · sent once` : (P.id === "arena" ? "Direct Max routing is off · the next engine or engine-free chat starts normally." : "Standard Auto saved for the next new chat."); }
         toast(selected ? `${profileProviderLabel} starter profile: ${b.textContent}` : `${profileProviderLabel} starter profile disabled`);
       }));
       const ta = menuEl.querySelector("#zs-set-text");
@@ -3247,7 +4893,7 @@
         `<div id="zs-setup-sub">The <b>Bridge</b> connects supported AI chats to Roblox Studio, Unity, Godot, Blender, and other configured MCP tools. Three steps and you're running.</div>` +
         `<ol id="zs-setup-steps">` +
           `<li>Download the Bridge from GitHub</li>` +
-          `<li>Run <code>start.bat</code></li>` +
+          `<li>Run <code>Setup.bat</code> once, then click the terminal icon</li>` +
           `<li>Open a supported editor/MCP server, then click <b>Start agent</b></li>` +
         `</ol>` +
         `<div class="zs-setup-copy-row">` +
@@ -3361,7 +5007,7 @@
           // without this check the bridge dropping fell through to the
           // stale "N tools" text below, reading as if nothing was wrong.
           toneClass = "warn"; warn = true;
-          msg = `<b>Agent active</b> · bridge offline, run start.bat`;
+          msg = `<b>Agent active</b> · bridge offline, click the terminal icon to start it`;
         } else if ((placeDown || appDown || studioDown) && addonOk) {
           // DEGRADED session by CHOICE: the user started the agent with Roblox
           // down but other MCP server(s) alive (the "Start agent (Roblox
@@ -3407,7 +5053,7 @@
           // unavailable until Studio is back. Button enabled, but visibly warned.
           toneClass = "warn"; warn = true;
           msg = !A.bridge.connected
-            ? `Run <b>start.bat</b> on your PC.`
+            ? `Click the <b>terminal icon</b> to start the bridge.`
             : studioProcUp
               ? `<b>Studio open but not connected</b> - open <b>Assistant Settings &gt; MCP Servers</b> in Studio, or start without it.`
               : `<b>Roblox Studio offline</b> - start with your other MCP server(s).`;
@@ -3416,7 +5062,7 @@
         } else {
           toneClass = "warn"; warn = true;
           msg = !A.bridge.connected
-            ? `Run <b>start.bat</b> on your PC.`
+            ? `Click the <b>terminal icon</b> to start the bridge.`
             : placeDown
               ? `Open a <b>place</b> in Roblox Studio.`
               : (appDown || studioDown) && studioProcUp
@@ -3441,6 +5087,19 @@
       if (A.parked && (A.running || A.starting)) {
         toneClass = "warn"; warn = false;
         msg = `<b>Paused</b> · bring this tab to the front to continue`;
+      }
+      // A bot-check owns the page: say exactly what to do, and make it clear the
+      // agent is waiting rather than dead. Takes priority over "Paused" because
+      // it is the thing actually blocking progress.
+      if (A.verifying) {
+        toneClass = "warn"; warn = true;
+        msg = `<b>Verification needed</b> · complete the human check in the page - the agent resumes by itself`;
+      } else if (A.pacingUntil && Date.now() < A.pacingUntil && (A.running || A.starting)) {
+        // Visible, honest pacing: the gap before the next turn is a deliberate
+        // rate-limit guard, not a hang. Shown only while the agent is working.
+        const secs = Math.max(1, Math.ceil((A.pacingUntil - Date.now()) / 1000));
+        if (toneClass !== "warn") toneClass = "active";
+        msg = `<b>Pacing</b> · next turn in ~${secs}s${A.pacingReason === "long-pause" ? " (reading break)" : A.pacingReason === "error-cooldown" ? " (after an error)" : ""}`;
       }
       // Provider mode guard: some sites (e.g. Arena) only work in one chat mode.
       // When the provider reports the current mode is unsupported, override the
@@ -3499,6 +5158,62 @@
       if (supportBtn) supportBtn.style.display = showExtras ? "" : "none";
     }
     let lastBarSig = "";
+    // ── Bridge terminal panel ───────────────────────────────────────────────
+    // The icon is a LIVE representation of the local bridge, not a decoration:
+    // data-state is driven by the real socket state, so what the user sees is
+    // what is true. Clicking it opens the terminal PANEL - a real view of the
+    // bridge's log, its attached engines and its health - rather than a toast.
+    // Colours come from CSS (theme-aware), so the icon and the panel follow the
+    // user's accent / light-dark / backdrop with no JS involvement.
+    let termPanel = null;
+    function paintBridge(state, title) {
+      if (!bridgeBtn) return;
+      bridgeBtn.dataset.state = state;
+      bridgeBtn.title = title;
+      bridgeBtn.setAttribute("aria-label", title);
+    }
+    function bridgeIdlePaint() {
+      if (!bridgeBtn) return;
+      const up = !!(A.bridge && A.bridge.connected);
+      paintBridge(up ? "live" : "down",
+        up ? "Bridge running - click for the live terminal"
+           : "Bridge not running - click to open the terminal and start it");
+      if (termPanel && termPanel.busy) paintBridge("starting", `Bridge ${termPanel.busy}…`);
+      bridgeBtn.setAttribute("aria-expanded", String(!!(termPanel && termPanel.isOpen())));
+      if (bridgeRunBtn) bridgeRunBtn.setAttribute("aria-expanded", String(!!(termPanel && termPanel.isOpen() && termPanel.currentTab() === "running")));
+    }
+    function ensureTerm() {
+      if (!termPanel && window.ZSTerminal) {
+        termPanel = new window.ZSTerminal.TerminalPanel({
+          mount: root,
+          bg: (msg) => bg(msg),
+          getStatus: () => A.bridge || {},
+          anchor: () => bridgeBtn,
+          onNeedReconnect: () => {
+            try { bg({ type: "reconnect" }); } catch {}
+          },
+          ui: { toast: (t) => toast(t), banner: (...a) => ui.banner(...a), onBusy: () => bridgeIdlePaint() },
+        });
+      }
+      return termPanel;
+    }
+    // Icon: open / close the terminal. Caret: open straight onto "Running".
+    function onBridgeClick() {
+      const t = ensureTerm();
+      if (!t) return;
+      if (t.isOpen() && t.currentTab() === "log") t.close();
+      else if (t.isOpen()) t.showTab("log");
+      else t.openPanel("log");
+      bridgeIdlePaint();
+    }
+    function onBridgeRunClick() {
+      const t = ensureTerm();
+      if (!t) return;
+      if (t.isOpen() && t.currentTab() === "running") t.close();
+      else if (t.isOpen()) t.showTab("running");
+      else t.openPanel("running");
+      bridgeIdlePaint();
+    }
 
     // Thin wrappers kept for the core's call sites; the decision lives in renderBar.
     function setStarted() { renderBar(); }
@@ -3506,6 +5221,10 @@
 
     function setStatus(s) {
       A.bridge = s;
+      // Keep the terminal icon truthful on every real status push. This is the
+      // only place bridge connectivity becomes known, so it is the only place the
+      // icon may be repainted from - anything else would be guessing.
+      bridgeIdlePaint();
       if (!dot) return;
       const servers = s.servers || [];
       const engines = s.engines || [];
@@ -3548,7 +5267,7 @@
       // Assistant Settings > MCP Servers inside the already-open Studio.
       const procUp = s.studioProc === true;
       let txt;
-      if (!s.connected) txt = "Bridge offline, run start.bat";
+      if (!s.connected) txt = "Bridge offline - click the terminal icon to start it";
       else if (!mcpOk) txt = "Bridge OK, open Roblox Studio";
       else if (noPlace) txt = "Roblox Studio is open but no place is loaded - open a place";
       else if (noApp) txt = procUp
@@ -3623,7 +5342,7 @@
         ? `<a class="zs-banner-video" href="${VIDEO_URL}" target="_blank" rel="noopener">▶︎ Watch setup tutorial</a>`
         : "";
       b.innerHTML = `<div class="zs-banner-t">⚠ Lost connection to Multi-Script</div>
-        <div class="zs-banner-m">The Multi-Script bridge stopped on your PC. Restart it (run start.bat and keep Roblox Studio open): the agent will reconnect automatically as soon as it is detected again.</div>
+        <div class="zs-banner-m">The Multi-Script bridge stopped on your PC. Restart it from the terminal icon in the chat bar (and keep Roblox Studio open): the agent will reconnect automatically as soon as it is detected again.</div>
         <div class="zs-banner-acts">${videoLink}<button class="zs-banner-x">Close</button></div>`;
       b.querySelector(".zs-banner-x").addEventListener("click", () => { b.remove(); if (bridgeBannerEl === b) bridgeBannerEl = null; });
       root.appendChild(b);
@@ -3723,7 +5442,9 @@
         if (m.length < 3) return;
         light = 0.2126 * m[0] + 0.7152 * m[1] + 0.0722 * m[2] > 140;
       }
-      document.documentElement.classList.toggle("zs-light", light);
+      pageIsLight = light;
+      document.documentElement.classList.toggle("zs-light", effectiveLight());
+      if (root) root.dataset.msTheme = effectiveMenuTheme();
     }
 
     // Where the bar lives INSIDE the site's composer. We insert it as a real,
@@ -3742,6 +5463,57 @@
 
     // Floating fallback geometry (used only when no inline mount is available).
     const BAR_MAX_W = 560, BAR_GAP = 8;
+
+    // ── Menu (popover) placement ─────────────────────────────────────────────
+    // ONE implementation, used by every branch of placeBar(). The menu is a
+    // position:fixed popover (see overlay.css) inside #zs-root, so `right:` and
+    // `bottom:` are distances to the VIEWPORT edges - exactly the space we have.
+    //
+    // The bug this replaces: each branch independently set
+    // `menuEl.style.right = innerWidth - barRect.right`, i.e. it treated a
+    // bar-relative offset as a viewport inset. On a wide composer the bar stops
+    // well short of the right edge, so that delta is the page gutter (hundreds
+    // of px) and the 370px-wide menu was pushed that far LEFT with nothing
+    // stopping it - half of it left the screen.
+    //
+    // `anchorRight` / `anchorTop` are optional viewport coordinates we would
+    // LIKE the menu's right edge and top edge to hug (normally the bar's right
+    // edge and top edge). Both are clamped so the panel always stays fully
+    // on-screen with a small gutter, and its height is capped to the space
+    // actually available above the anchor.
+    const MENU_GUTTER = 8, MENU_MIN_W = 240, MENU_MIN_H = 140;
+    function placeMenu(anchorRight, anchorTop) {
+      if (!menuEl || menuEl.hidden) return;
+      const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+      const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+      if (!vw || !vh) return;
+
+      // Preferred width: the configured menu width, never wider than the screen.
+      const widths = { small:310, medium:370, wide:440, studio:520 };
+      const wantW = Math.max(MENU_MIN_W, Math.min(widths[menuPrefs.width] || widths.medium, vw - MENU_GUTTER * 2));
+      menuEl.style.width = Math.round(wantW) + "px";
+      menuEl.style.maxWidth = "calc(100vw - " + MENU_GUTTER * 2 + "px)";
+
+      // Horizontal: hug the anchor's right edge, then clamp BOTH edges into the
+      // viewport. The clamp is what guarantees the panel can never slide off the
+      // left edge, whatever the composer's geometry is.
+      const right0 = (typeof anchorRight === "number" && isFinite(anchorRight))
+        ? anchorRight
+        : vw - MENU_GUTTER;
+      const right = Math.max(MENU_GUTTER, Math.min(right0, vw - wantW - MENU_GUTTER));
+      menuEl.style.right = Math.round(right) + "px";
+      menuEl.style.left = "auto";
+
+      // Vertical: sit just above the anchor's top edge, capped so the panel
+      // always has at least MENU_MIN_H of room and never runs off the top.
+      const bottomGap = MENU_GUTTER - 2; // 6px visual gap above the bar
+      const baseTop = (typeof anchorTop === "number" && isFinite(anchorTop)) ? anchorTop : vh;
+      const bottom = Math.max(MENU_GUTTER, vh - baseTop + bottomGap);
+      const avail = Math.max(MENU_MIN_H, vh - bottom - MENU_GUTTER);
+      menuEl.style.bottom = Math.round(bottom) + "px";
+      menuEl.style.top = "auto";
+      menuEl.style.maxHeight = Math.round(avail) + "px";
+    }
 
     // Anchored mode bookkeeping: the composer element whose top padding we are
     // borrowing to seat the bar (see the anchored branch below). Cleared when we
@@ -3762,6 +5534,16 @@
       const uh = u.offsetHeight || 20;
       u.style.left = Math.round(br.left) + "px";
       u.style.top = Math.round(Math.max(4, br.top - uh - 5)) + "px";
+    }
+
+    // Responsive bar chrome is driven by the actual composer/bar width, not the
+    // viewport. Notion can keep a narrow centered composer on a wide monitor;
+    // viewport media queries therefore miss the exact case that needs compact
+    // controls. These classes keep every control inside the measured anchor.
+    function syncBarFit(width) {
+      const w = Number(width) || 0;
+      bar.classList.toggle("zs-bar-narrow", w > 0 && w < 760);
+      bar.classList.toggle("zs-bar-compact", w > 0 && w < 620);
     }
 
     function placeBar() {
@@ -3815,11 +5597,10 @@
         // when mounted ABOVE it. The provider's barMount() signals which via .inside.
         bar.classList.toggle("zs-bar-inside", !!mount.inside);
         bar.style.display = "flex";
+        syncBarFit(bar.getBoundingClientRect().width);
         if (menuEl && !menuEl.hidden) {
           const br = bar.getBoundingClientRect();
-          menuEl.style.right = Math.round(window.innerWidth - br.right) + "px";
-          menuEl.style.bottom = Math.round(window.innerHeight - br.top + 6) + "px";
-          menuEl.style.maxHeight = Math.max(140, Math.round(br.top - 16)) + "px";
+          placeMenu(window.innerWidth - br.right, br.top);
         }
         return;
       }
@@ -3844,14 +5625,28 @@
         if (anchorPadEl && anchorPadEl !== anchorEl) clearAnchorPad();
         anchorPadEl = anchorEl;
         anchorEl.style.paddingTop = (bh + 6) + "px"; // reserve the strip the bar sits in (+gap)
+        // Per-site content inset. A provider may know that its composer card has
+        // more inset than the generic 16px (Notion's AI card, Meta's rounded-32
+        // card). Without this the bar's ends sit against the card's rounded
+        // corner while the site's own text starts further in, which reads as
+        // misaligned with the composer it is docked to. The provider derives the
+        // numbers from the frame's real padding, so a restyle is followed rather
+        // than hardcoded; CSS carries the same default when measurement fails.
+        const inset = (P.barInset && P.barInset()) || null;
+        if (inset && (inset.left > 0 || inset.right > 0)) {
+          bar.style.paddingLeft = Math.round(inset.left) + "px";
+          bar.style.paddingRight = Math.round(inset.right) + "px";
+        } else if (bar.style.paddingLeft) {
+          bar.style.paddingLeft = "";
+          bar.style.paddingRight = "";
+        }
         bar.style.left = Math.round(r.left) + "px";
         bar.style.top = Math.round(r.top) + "px";
         bar.style.width = Math.round(r.width) + "px";
+        syncBarFit(r.width);
         if (menuEl && !menuEl.hidden) {
           bar.classList.remove("zs-bar-inline"); // ensure fixed geometry for menu math
-          menuEl.style.right = Math.round(window.innerWidth - (r.left + r.width)) + "px";
-          menuEl.style.bottom = Math.round(window.innerHeight - r.top + 6) + "px";
-          menuEl.style.maxHeight = Math.max(140, Math.round(r.top - 16)) + "px";
+          placeMenu(window.innerWidth - (r.left + r.width), r.top);
         }
         return;
       }
@@ -3872,8 +5667,9 @@
           bar.classList.add("zs-bar-detached");
           if (root && bar.parentElement !== root) root.appendChild(bar);
           bar.style.display = "flex"; bar.style.width = "min(560px, calc(100vw - 32px))";
+          syncBarFit(Math.min(560, Math.max(0, window.innerWidth - 32)));
           bar.style.left = "auto"; bar.style.right = "16px"; bar.style.top = "auto"; bar.style.bottom = "16px";
-          if (menuEl && !menuEl.hidden) { menuEl.style.right="16px"; menuEl.style.bottom=`${(bar.offsetHeight||40)+24}px`; }
+          if (menuEl && !menuEl.hidden) placeMenu(16, window.innerHeight - (bar.offsetHeight || 40) - 24);
           return;
         }
         bar.style.display = "none"; if (menuEl) menuEl.hidden = true; return;
@@ -3887,14 +5683,13 @@
       const bh = bar.offsetHeight || 40;
       const top = Math.max(4, Math.round(r.top - bh - BAR_GAP));
       bar.style.width = w + "px";
+      syncBarFit(w);
       bar.style.left = left + "px";
       bar.style.top = top + "px";
       // Keep the open "more" menu anchored to the bar, opening upward.
       if (menuEl && !menuEl.hidden) {
         const br = bar.getBoundingClientRect();
-        menuEl.style.right = Math.round(window.innerWidth - br.right) + "px";
-        menuEl.style.bottom = Math.round(window.innerHeight - br.top + 6) + "px";
-        menuEl.style.maxHeight = Math.max(140, Math.round(br.top - 16)) + "px";
+        placeMenu(window.innerWidth - br.right, br.top);
       }
     }
 
@@ -4130,6 +5925,50 @@
       root.appendChild(b);
     }
 
+    // Editable, provider-independent prompt review. The original request has
+    // already been sent by the site, so "Use original" means "do not send the
+    // extra brief" rather than duplicating the user's message.
+    function reviewEnhancedPrompt(original, result) {
+      return new Promise((resolve) => {
+        root.querySelectorAll(".zs-enhance-review").forEach((e) => e.remove());
+        const shade = document.createElement("div");
+        shade.className = "zs-enhance-review";
+        shade.innerHTML = `<div class="zs-enhance-dialog" role="dialog" aria-modal="true" aria-labelledby="zs-enhance-review-title">
+          <div class="zs-enhance-dialog-head"><div><b id="zs-enhance-review-title">Review enhanced prompt</b><span></span></div><button type="button" data-action="cancel" aria-label="Cancel">×</button></div>
+          <div class="zs-enhance-dialog-meta"></div>
+          <label>Multi-Script will add this brief</label>
+          <textarea spellcheck="true"></textarea>
+          <div class="zs-enhance-dialog-actions"><button type="button" data-action="original">Use original</button><button type="button" data-action="send" class="primary">Add brief & continue</button></div>
+        </div>`;
+        const ta = shade.querySelector("textarea");
+        const meta = shade.querySelector(".zs-enhance-dialog-meta");
+        const sub = shade.querySelector(".zs-enhance-dialog-head span");
+        ta.value = String(result.text || "");
+        sub.textContent = `${result.intent || "task"} · ${(result.added || []).join(" · ")}`;
+        meta.textContent = `Your original wording stays in the chat unchanged. You can edit the added brief below, skip it, or cancel the run.`;
+        let done = false;
+        const finish = (action) => {
+          if (done) return;
+          done = true;
+          document.removeEventListener("keydown", onKey, true);
+          shade.remove();
+          resolve({ action, text: ta.value, originalText: String(result.text || ""), original });
+        };
+        const onKey = (e) => {
+          if (e.key === "Escape") { e.preventDefault(); finish("cancel"); }
+          if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); finish("send"); }
+        };
+        shade.addEventListener("click", (e) => {
+          const action = e.target && e.target.dataset && e.target.dataset.action;
+          if (action) finish(action);
+          else if (e.target === shade) finish("cancel");
+        });
+        document.addEventListener("keydown", onKey, true);
+        root.appendChild(shade);
+        setTimeout(() => { try { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } catch {} }, 0);
+      });
+    }
+
     // Left-hand Multi-Script popup showing the latest screen_capture. Fed from the
     // in-memory base64 (a data: URL always renders), so it works identically on
     // every provider and never touches the site's DOM. Only the most recent
@@ -4163,7 +6002,7 @@
     }
 
     build();
-    return { setStatus, staleExtensionAlert, setStarted, setStarting, showStop, markStopping, inputCover, toast, banner, showImages, nudgeStart, updateStartGate, refreshSetup, getCustomPrompt, getUsageMode, getSkillDepth, getCustomMcpServers, buildSettingsBackup, applySettingsBackup, openMenu: (toSupport) => openMenuFn && openMenuFn(toSupport) };
+    return { setStatus, staleExtensionAlert, setStarted, setStarting, showStop, markStopping, inputCover, toast, banner, reviewEnhancedPrompt, showImages, nudgeStart, updateStartGate, refreshSetup, getCustomPrompt, getUsageMode, getSkillDepth, getCustomMcpServers, buildSettingsBackup, applySettingsBackup, openMenu: (toSupport) => openMenuFn && openMenuFn(toSupport) };
   })();
 
   // ── Live token + timer, shown ONLY on a tool call's chip detail. The
@@ -4422,11 +6261,35 @@
       sendResponse({ ok:true, provider:P.id, editorFound:!!P.getEditor() });
     }
     if (msg && msg.type === "zs-ping") sendResponse({ ok:true, provider:P.id, editorFound:!!P.getEditor() });
+    // Live log frames from the worker. Routed straight into the panel, which
+    // owns all rendering, so the worker stays a pure transport.
+    if (msg && msg.type === "ms-log-push") {
+      if (termPanel) termPanel.push(msg.lines);
+      sendResponse({ ok: true });
+    }
+    // Auto-start progress from the worker (terminal launcher installed + bridge down).
+    if (msg && msg.type === "bridge_host_event") {
+      const t = ensureTerm();
+      if (t) t.hostEvent(msg);
+      bridgeIdlePaint();
+      sendResponse({ ok: true });
+    }
+    if (msg && msg.type === "ms-log-cleared") {
+      if (termPanel) termPanel.cleared();
+      sendResponse({ ok: true });
+    }
+    // A bridge restart invalidates every seq we have seen, so the panel drops its
+    // cursor and re-reads the backlog. Without this it would keep requesting
+    // `since=<stale high seq>` and the log would appear frozen.
+    if (msg && msg.type === "ms-log-reset") {
+      if (termPanel) termPanel.reset();
+      sendResponse({ ok: true });
+    }
   });
 
   // Status poll. An orphaned content script (see bg / isContextInvalidated) gets
   // a failure object back whose `connected` is undefined, which setStatus would
-  // read as "the bridge just dropped" and answer with the red "run start.bat"
+  // read as "the bridge just dropped" and answer with the red "start the bridge"
   // banner - sending the user to fix a bridge that is perfectly healthy, with
   // the one thing that WOULD fix it (reload the page) never mentioned. Catch it
   // before setStatus, say the right thing, and stop polling: the context can
@@ -4642,8 +6505,17 @@
       // A fresh user message = fresh intent: clear any previous manual stop so
       // the loop is allowed to run again.
       A.userStopped = false;
+      noteNotionPrompt();
       bumpSys("users");
       captureSendToken(); // identity of the assistant turn before this reply
+      // Capture the user's OWN wording for the enhancer. This hook runs from the
+      // provider's keydown/click interception BEFORE the site's framework clears
+      // the composer, so editorText() still holds exactly what the user typed.
+      // Read it once, here, and hand it to the loop - the loop cannot ask later
+      // because the editor is empty by then.
+      let userText = "";
+      try { userText = (P.editorText && P.editorText()) || ""; } catch {}
+      if (userText.trim()) A.lastUserText = userText.trim();
       // A Stop clicked during this 300ms window sets A.userStopped → honor it and
       // do NOT start the loop (otherwise the stop is silently ignored and the
       // freshly-started loop strands the "Stopping…" flag).

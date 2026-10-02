@@ -123,7 +123,7 @@ def _generate_elevenlabs_sound_effect(text, name="sound-effect", duration_second
         "xi-api-key": key,
         "Content-Type": "application/json",
         "Accept": "audio/mpeg, audio/wav, application/octet-stream",
-        "User-Agent": "Multi-Script/6.17.3",
+        "User-Agent": "Multi-Script/6.24.0",
     })
     open_fn = opener or request.urlopen
     try:

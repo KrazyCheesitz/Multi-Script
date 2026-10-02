@@ -5,6 +5,10 @@ for(const x of ['Audio generation','type="password"','elevenlabs_configure','ele
 if(/chrome\.storage\.local\.set\([^\n]*ELEVEN/i.test(main))throw Error('secret stored in browser');
 if(!bg.includes('case "elevenlabs_configure"')||!bg.includes('elevenlabs_settings'))throw Error('missing secure transport');
 for(const x of ['data-ms-theme','data-ms-backdrop','data-ms-motion','zs-secret-field','zs-theme-grid'])if(!css.includes(x))throw Error('missing style '+x);
+const settingsBody=main.slice(main.indexOf('const appearanceHtml'),main.indexOf('const notionProfiles'));
+if(/DeepSeek/.test(settingsBody))throw Error('universal settings copy is branded or limited to DeepSeek');
+for(const x of ['Prompt enhancer','Execution effort','Creative output','Production checks','Studio skill coverage','Usage optimizer','Reply pacing','Error recovery','Autonomy'])if(!settingsBody.includes(x))throw Error('universal settings section missing '+x);
+if(!main.includes('providerBehaviorMap[P.id]')||main.includes('providerBehaviorMap.deepseek'))throw Error('provider settings are not keyed by the active provider');
 console.log('PASS customizable settings UI and browser-secret exclusion');
 
 if(!main.includes("to use it free, you need a business trial."))throw new Error("missing Notion business-trial menu description");

@@ -17,6 +17,10 @@
       "env": {
         "DEBUG": "false"
       }
+    },
+    "blender": {
+      "command": "launch_blender_mcp.py",
+      "args": []
     }
   }
 }
